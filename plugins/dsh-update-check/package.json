@@ -1,0 +1,13 @@
+{
+  "name": "dsh-update-check",
+  "version": "1.0.0",
+  "description": "启动时检测 DSH 更新，有更新时在侧边栏底部显示更新按钮，点击执行更新。",
+  "type": "module",
+  "main": "lib/index.js",
+  "license": "MIT",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}

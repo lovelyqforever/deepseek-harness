@@ -1,0 +1,25 @@
+{
+  "name": "dsh-background",
+  "version": "1.0.0",
+  "description": "自定义背景：在「插件配置」里选本地图片作为全屏背景，保存后立即生效并跨重启保留（图片存在插件目录 assets/，不占系统盘）。",
+  "type": "module",
+  "main": "lib/index.js",
+  "license": "MIT",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-slots",
+        "@deepseek-ai/dsh-client-ui-settings-plugins"
+      ],
+      "platform": "web"
+    }
+  },
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json"
+  }
+}

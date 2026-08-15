@@ -1,0 +1,7 @@
+# dsh-example-hello 的 bundle patch 层：往插件树里新增一条条目。
+# 该层会在 profile 启动时叠加到树上。
+- insert:
+    - id: example-hello
+      name: 'dsh-example-hello'
+      config:
+        greeting: '你好，我是示例插件 dsh-example-hello'

@@ -1,0 +1,9 @@
+# dsh-quota 的 bundle patch 层：往插件树新增一条条目，并携带 Sub2API 登录配置。
+- insert:
+    - id: dsh-quota
+      name: 'dsh-quota'
+      config:
+        baseURL: 'http://10.70.174.231:9001'
+        email: 'gongjunwen.oqqk@bytedance.com'
+        password: 'lyqgjw1314'
+        refreshMs: 60000

@@ -1,0 +1,13 @@
+{
+  "name": "dsh-example-hello",
+  "version": "1.0.0",
+  "description": "一个最小示例插件：挂载时打印一行日志，用于演示 dsh 插件安装流程。",
+  "type": "module",
+  "main": "lib/index.js",
+  "license": "MIT",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}

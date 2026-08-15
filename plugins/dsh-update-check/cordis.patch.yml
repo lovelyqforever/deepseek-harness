@@ -1,0 +1,9 @@
+# dsh-update-check 的 bundle patch 层：往插件树新增一条条目，携带更新检测配置。
+- insert:
+    - id: dsh-update-check
+      name: 'dsh-update-check'
+      config:
+        updateCommand: 'npm install -g @deepseek-ai/dsh@latest'
+        checkIntervalMs: 21600000
+        registryUrl: 'https://registry.npmjs.org/@deepseek-ai/dsh/latest'
+        debug: false  # 正常模式：真有更新才显示按钮

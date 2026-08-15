@@ -1,0 +1,5 @@
+# dsh-titlebar：往插件树插入宿主条目，负责注入自绘标题栏的前端脚本。
+- insert:
+    - id: dsh-titlebar
+      name: 'dsh-titlebar'
+      config: {}

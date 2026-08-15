@@ -1,0 +1,26 @@
+{
+  "name": "dsh-profile-web",
+  "private": true,
+  "dsh": {
+    "profile": {
+      "bundles": [
+        "@deepseek-ai/dsh-base",
+        "@deepseek-ai/dsh-web-app",
+        "dsh-quota",
+        "dsh-hello",
+        "dsh-update-check",
+        "dsh-titlebar",
+        "dsh-background",
+        "@liustack/modlens"
+      ]
+    }
+  },
+  "dependencies": {
+    "dsh-quota": "link:../plugins/dsh-quota",
+    "dsh-hello": "link:../plugins/dsh-hello",
+    "dsh-update-check": "link:../plugins/dsh-update-check",
+    "dsh-titlebar": "link:../plugins/dsh-titlebar",
+    "dsh-background": "link:../plugins/dsh-background",
+    "@liustack/modlens": "link:../plugins/modlens"
+  }
+}

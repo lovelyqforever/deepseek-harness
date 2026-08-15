@@ -1,0 +1,28 @@
+# 依赖（任何一层）
+node_modules/
+
+# 壳的构建产物
+src/dist/
+
+# 已安装的 exe（构建产物，不是源码）
+app/
+
+# 研究/参考（社区仓库等，非本仓库源码）
+_research/
+
+# 密钥（绝不入库）
+.credentials.yaml
+
+# profile 的安装产物（pnpm install 重新生成）
+profile/node_modules/
+profile/pnpm-lock.yaml
+
+# 无关/调试残留（不传）
+_sub2api.js
+_debug_index.html
+
+# IDE 配置
+.idea/
+
+# dsh-background 运行时用户数据（背景图/状态，运行期自建）
+plugins/dsh-background/assets/

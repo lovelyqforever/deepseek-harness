@@ -1,0 +1,7 @@
+# dsh-hello 的 bundle patch 层：往插件树新增一条宿主条目（问候语插件的宿主半）。
+# 宿主半负责注册全局可持久化的 `hello` 设置命名空间；客户端半负责渲染配置卡和显示位。
+- insert:
+    - id: dsh-hello
+      name: 'dsh-hello'
+      config:
+        greeting: '你好！这是一个可配置的问候语。'

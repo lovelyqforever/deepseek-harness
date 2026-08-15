@@ -1,0 +1,11 @@
+{
+  "name": "dsh-titlebar",
+  "version": "1.0.0",
+  "description": "自绘窗口标题栏（拖拽 + 最小化/最大化/关闭），仅在 Electron 桌面壳下渲染，WebUI 下自动跳过。",
+  "type": "module",
+  "main": "lib/index.js",
+  "license": "MIT",
+  "dsh": {
+    "bundle": { "patch": "./cordis.patch.yml" }
+  }
+}

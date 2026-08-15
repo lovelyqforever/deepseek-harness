@@ -1,0 +1,13 @@
+{
+  "name": "dsh-quota",
+  "version": "1.0.0",
+  "description": "在侧边栏「新会话」按钮上方显示 Sub2API 订阅额度（今日花费 + 总消费/总额度）。",
+  "type": "module",
+  "main": "lib/index.js",
+  "license": "MIT",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}

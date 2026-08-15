@@ -1,0 +1,7 @@
+# dsh-background 的 bundle patch 层：往插件树新增一条宿主条目（自定义背景插件）。
+# 宿主半负责把背景图存到插件自己的 assets/ 目录（D 盘），并通过 webServer 暴露读写端点；
+# 客户端半负责渲染配置卡 + 全屏背景层 + 面板透明化。
+- insert:
+    - id: dsh-background
+      name: 'dsh-background'
+      config: {}
