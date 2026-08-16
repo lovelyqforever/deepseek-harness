@@ -131,8 +131,8 @@ window.__ModuleLoader__.load({
         };
       }
       return {
-        // —— 底背景透明，让壁纸透出 ——
-        "--dsw-alias-bg-base": { light: "transparent", dark: "transparent" },
+        // —— 底背景磨砂（整个应用画布）：让壁纸透过一层雾，与侧边栏/输入框统一，不再割裂 ——
+        "--dsw-alias-bg-base": surf("255,255,255", "12,18,27"),
         // —— 浮层表面：半透明磨砂 ——
         "--dsw-alias-bg-layer-1": surf("255,255,255", "17,26,39"),
         "--dsw-alias-bg-layer-2": surf("236,242,250", "22,33,48"),
