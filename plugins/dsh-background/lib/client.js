@@ -54,6 +54,8 @@ window.__ModuleLoader__.load({
       ".dsbg_swatch{width:14px;height:14px;border-radius:4px;border:1px solid var(--dsw-alias-border-l2)}",
       // 压暗层：只叠加在我们自己注入的背景层上，不碰 DSH 任何元素
       "#dsh-background-layer::after{content:'';position:absolute;inset:0;background:rgba(0,0,0,var(--dsbg-scrim,.38));pointer-events:none}",
+      // 壁纸元素：blur 只糊壁纸本身
+      ".dsbg-wallpaper{position:absolute;inset:0;background-size:cover;background-position:center;background-repeat:no-repeat;filter:blur(var(--dsbg-wallpaper-blur,0px))}",
     ].join("");
 
     const tagId = "dsh-background/styles";
@@ -73,11 +75,14 @@ window.__ModuleLoader__.load({
       return Math.min(max, Math.max(min, n));
     }
     function normalizeReadability(r) {
+      const frostRaw = r && r.frost !== undefined ? r.frost : (r && r.frostAlpha !== undefined ? r.frostAlpha * 100 : 50);
+      // 旧版「模糊强度」(blur) 迁移为「壁纸模糊」(wallpaperBlur)
+      const wpBlurRaw = r && r.wallpaperBlur !== undefined ? r.wallpaperBlur : (r && r.blur !== undefined ? r.blur : 0);
       return {
         scrim: clampNum(r && r.scrim, 0, 0.85, 0.38),
-        frostAlpha: clampNum(r && r.frostAlpha, 0.05, 1, 0.6),
-        blur: clampNum(r && r.blur, 0, 40, 16),
+        frost: clampNum(frostRaw, 0, 100, 50),
         edge: clampNum(r && r.edge, 0, 0.6, 0.25),
+        wallpaperBlur: clampNum(wpBlurRaw, 0, 40, 0),
       };
     }
 
@@ -86,18 +91,21 @@ window.__ModuleLoader__.load({
     // 移植自 deepseek.com join 区块背景的 DISPLAY_SHADER（与参考插件同源）。
     // 单遍 + 1x1 空流场 → influence=0，等价于参考插件在 Windows 上（无鼠标轨迹）的观感。
     // =====================================================================
-    const AURORA_PALETTES = {
-      blue: { label: "蓝白", colors: ["#8AA3D6", "#FFFFFF", "#FFFFFF"] },
-      violet: { label: "紫粉", colors: ["#A78BFA", "#F9A8D4", "#FFFFFF"] },
-      teal: { label: "青绿", colors: ["#5EEAD4", "#93C5FD", "#FFFFFF"] },
+    const AURORA_THEMES = {
+      light: { colors: ["#5B8DE0", "#A9C6F5", "#FFFFFF"], distortion: 24, swirl: 14 },
+      dark: { colors: ["#2D4F8D", "#101E38", "#0B1628"], distortion: 20, swirl: 12 },
     };
+
+    function currentAuroraTheme() {
+      const dark = typeof document !== "undefined" && document.body && document.body.getAttribute("data-ds-dark-theme") !== null;
+      return dark ? "dark" : "light";
+    }
 
     function normalizeAurora(p) {
       return {
         speed: clampNum(p && p.speed, 1, 30, 14),
-        distortion: clampNum(p && p.distortion, 0, 40, 20),
-        swirl: clampNum(p && p.swirl, 0, 24, 12),
-        palette: AURORA_PALETTES[p && p.palette] ? p.palette : "blue",
+        hue: clampNum(p && p.hue, 0, 360, 0),
+        brightness: clampNum(p && p.brightness, 40, 160, 100),
       };
     }
 
@@ -328,16 +336,17 @@ void main() {
         fileFilter: "image/png,image/jpeg,image/webp,image/gif",
         needsFile: true,
         apply(layer, opts) {
-          layer.style.backgroundImage = 'url("' + opts.url + '")';
-          layer.style.backgroundSize = "cover";
-          layer.style.backgroundPosition = "center";
-          layer.style.backgroundRepeat = "no-repeat";
+          let img = layer._dsbgWallpaper;
+          if (!img) {
+            img = document.createElement("div");
+            img.className = "dsbg-wallpaper";
+            layer.appendChild(img);
+            layer._dsbgWallpaper = img;
+          }
+          img.style.backgroundImage = 'url("' + opts.url + '")';
         },
         clear(layer) {
-          layer.style.backgroundImage = "";
-          layer.style.backgroundSize = "";
-          layer.style.backgroundPosition = "";
-          layer.style.backgroundRepeat = "";
+          if (layer._dsbgWallpaper) { layer._dsbgWallpaper.remove(); layer._dsbgWallpaper = null; }
         },
       },
       aurora: {
@@ -345,7 +354,7 @@ void main() {
         label: "动态极光",
         apply(layer, opts) {
           const p = normalizeAurora(opts && opts.params);
-          const colors = AURORA_PALETTES[p.palette].colors;
+          const theme = AURORA_THEMES[currentAuroraTheme()];
           let canvas = layer._dsbgAuroraCanvas;
           if (!canvas) {
             canvas = document.createElement("canvas");
@@ -353,7 +362,8 @@ void main() {
             layer.appendChild(canvas);
             layer._dsbgAuroraCanvas = canvas;
           }
-          const shaderParams = { speed: p.speed, distortion: p.distortion, swirl: p.swirl, colors: colors };
+          canvas.style.filter = "hue-rotate(" + p.hue + "deg) brightness(" + (p.brightness / 100) + ")";
+          const shaderParams = { speed: p.speed, distortion: theme.distortion, swirl: theme.swirl, colors: theme.colors };
           if (layer._dsbgAuroraHandle) {
             layer._dsbgAuroraHandle.setParams(shaderParams);
           } else {
@@ -388,7 +398,7 @@ void main() {
     // 值是 { light, dark }，不校验 token 名，因此可覆盖 design-platform.css 里的全部 token。
     // =====================================================================
     function buildTokens(r) {
-      const a = r.frostAlpha;
+      const a = r.frost / 100;
       const e = r.edge;
       const over = Math.min(1, a + 0.12);
       const pct = Math.round(a * 100);
@@ -402,6 +412,11 @@ void main() {
         };
       }
       return {
+        // —— 字体：拉丁用几何无衬线（装了 Space Grotesk 才生效），CJK 兜底系统字体 ——
+        "--dsw-font-family": {
+          light: "'Space Grotesk Variable', 'Space Grotesk', system-ui, -apple-system, 'Segoe UI', Roboto, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif",
+          dark: "'Space Grotesk Variable', 'Space Grotesk', system-ui, -apple-system, 'Segoe UI', Roboto, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif",
+        },
         // —— 底背景磨砂（整个应用画布）：让壁纸透过一层雾，与侧边栏/输入框统一，不再割裂 ——
         "--dsw-alias-bg-base": surf("255,255,255", "12,18,27"),
         // —— 浮层表面：半透明磨砂 ——
@@ -468,12 +483,12 @@ void main() {
       if (tokenDisposer) { try { tokenDisposer(); } catch (e) {} tokenDisposer = null; }
     }
 
-    // 把可读性参数落到 DOM：压暗 → 背景层 ::after；模糊 → 背景层 filter；磨砂/描边 → token 覆盖
+    // 把可读性参数落到 DOM：压暗 → 背景层 ::after；壁纸模糊 → 壁纸元素 filter；磨砂/描边 → token 覆盖
     function applyReadabilityLive(r) {
       const n = normalizeReadability(r);
       const layer = ensureLayer();
       layer.style.setProperty("--dsbg-scrim", String(n.scrim));
-      layer.style.filter = "blur(" + n.blur + "px)";
+      layer.style.setProperty("--dsbg-wallpaper-blur", n.wallpaperBlur + "px");
       applyTokens(n);
     }
 
@@ -497,7 +512,7 @@ void main() {
       if (layer) {
         for (const key in providers) providers[key].clear(layer);
         layer.style.removeProperty("--dsbg-scrim");
-        layer.style.filter = "";
+        layer.style.removeProperty("--dsbg-wallpaper-blur");
       }
       clearTokens();
     }
@@ -657,6 +672,8 @@ void main() {
         if (m === "aurora") {
           const p = normalizeAurora(aurora);
           applyAuroraLive(p);
+          // 同时应用磨砂/压暗/描边，避免极光被实心面板挡住
+          applyReadabilityLive(readability);
           saveAurora(p).catch(function () {});
         }
       }
@@ -669,24 +686,6 @@ void main() {
         auroraTimer.current = setTimeout(function () {
           saveAurora(normalizeAurora(next)).catch(function () {});
         }, 300);
-      }
-
-      function paletteButtons() {
-        return Object.keys(AURORA_PALETTES).map(function (id) {
-          const pal = AURORA_PALETTES[id];
-          return react.createElement("button", {
-            key: id,
-            type: "button",
-            className: "dsbg_paletteBtn",
-            "data-active": aurora.palette === id,
-            onClick: function () { changeAurora("palette", id); },
-          },
-            react.createElement("span", { className: "dsbg_swatches" },
-              pal.colors.map(function (c) { return react.createElement("span", { key: c, className: "dsbg_swatch", style: { background: c } }); })
-            ),
-            pal.label
-          );
-        });
       }
 
       function handlePick(event) {
@@ -769,27 +768,26 @@ void main() {
               }),
               "浏览文件…"
             ),
+            react.createElement(SliderRow, { label: "壁纸模糊", valueText: Math.round(readability.wallpaperBlur) + "px", min: 0, max: 40, step: 1, value: readability.wallpaperBlur, onChange: function (v) { changeReadability("wallpaperBlur", v); } }),
             react.createElement("p", { className: "dsbg_hint" }, "支持 PNG / JPG / WebP / GIF。图片保存在插件目录（D 盘），不占系统盘，重启后自动还原。")
           ) : null,
           mode === "aurora" ? react.createElement("div", { className: "dsbg_field" },
             react.createElement("div", { className: "dsbg_fieldHead" },
               react.createElement("label", { className: "dsbg_label" }, "极光参数")
             ),
-            react.createElement("div", { className: "dsbg_palette" }, paletteButtons()),
             react.createElement(SliderRow, { label: "流速", valueText: String(aurora.speed), min: 1, max: 30, step: 1, value: aurora.speed, onChange: function (v) { changeAurora("speed", v); } }),
-            react.createElement(SliderRow, { label: "扭曲", valueText: String(aurora.distortion), min: 0, max: 40, step: 1, value: aurora.distortion, onChange: function (v) { changeAurora("distortion", v); } }),
-            react.createElement(SliderRow, { label: "漩涡", valueText: String(aurora.swirl), min: 0, max: 24, step: 1, value: aurora.swirl, onChange: function (v) { changeAurora("swirl", v); } }),
-            react.createElement("p", { className: "dsbg_hint" }, "程序实时生成的流动极光；切换配色/拖动滑杆立即生效并自动保存。")
+            react.createElement(SliderRow, { label: "色相", valueText: aurora.hue + "°", min: 0, max: 360, step: 1, value: aurora.hue, onChange: function (v) { changeAurora("hue", v); } }),
+            react.createElement(SliderRow, { label: "亮度", valueText: aurora.brightness + "%", min: 40, max: 160, step: 1, value: aurora.brightness, onChange: function (v) { changeAurora("brightness", v); } }),
+            react.createElement("p", { className: "dsbg_hint" }, "配色自动跟随明暗主题；色相 / 亮度 / 流速拖动立即生效并自动保存。")
           ) : null,
           hasCurrent ? react.createElement("div", { className: "dsbg_field" },
             react.createElement("div", { className: "dsbg_fieldHead" },
               react.createElement("label", { className: "dsbg_label" }, "可读性（磨砂）")
             ),
             react.createElement(SliderRow, { label: "压暗深度", valueText: Math.round(readability.scrim * 100) + "%", min: 0, max: 0.85, step: 0.01, value: readability.scrim, onChange: function (v) { changeReadability("scrim", v); } }),
-            react.createElement(SliderRow, { label: "磨砂不透明度", valueText: Math.round(readability.frostAlpha * 100) + "%", min: 0.05, max: 1, step: 0.01, value: readability.frostAlpha, onChange: function (v) { changeReadability("frostAlpha", v); } }),
-            react.createElement(SliderRow, { label: "模糊强度", valueText: Math.round(readability.blur) + "px", min: 0, max: 40, step: 1, value: readability.blur, onChange: function (v) { changeReadability("blur", v); } }),
+            react.createElement(SliderRow, { label: "磨砂不透明度", valueText: Math.round(readability.frost) + "%", min: 0, max: 100, step: 1, value: readability.frost, onChange: function (v) { changeReadability("frost", v); } }),
             react.createElement(SliderRow, { label: "描边强度", valueText: Math.round(readability.edge * 100) + "%", min: 0, max: 0.6, step: 0.01, value: readability.edge, onChange: function (v) { changeReadability("edge", v); } }),
-            react.createElement("p", { className: "dsbg_hint" }, "拖动立即生效并自动保存；数值越大，文字越清楚、面板越实、描边越明显。")
+            react.createElement("p", { className: "dsbg_hint" }, "拖动立即生效并自动保存。压暗=背景变暗；磨砂=面板不透明度；描边=面板边框清晰度。")
           ) : null,
           react.createElement("div", { className: "dsbg_footer" },
             failed ? react.createElement("p", { className: "dsbg_failed", role: "status" }, "操作失败") : null,

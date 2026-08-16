@@ -208,9 +208,9 @@ export function apply(ctx, config) {
           ...(old.provider === "aurora" ? { provider: "aurora", params: old.params } : {}),
           readability: {
             scrim: clampNum(body.scrim, 0, 0.85, 0.38),
-            frostAlpha: clampNum(body.frostAlpha, 0.05, 1, 0.6),
-            blur: clampNum(body.blur, 0, 40, 16),
+            frost: clampNum(body.frost, 0, 100, 50),
             edge: clampNum(body.edge, 0, 0.6, 0.25),
+            wallpaperBlur: clampNum(body.wallpaperBlur, 0, 40, 0),
           },
         };
         writeConfig(next);
@@ -241,9 +241,8 @@ export function apply(ctx, config) {
         const old = readConfig();
         const params = {
           speed: clampNum(p.speed, 1, 30, 14),
-          distortion: clampNum(p.distortion, 0, 40, 20),
-          swirl: clampNum(p.swirl, 0, 24, 12),
-          palette: typeof p.palette === "string" ? p.palette : "blue",
+          hue: clampNum(p.hue, 0, 360, 0),
+          brightness: clampNum(p.brightness, 40, 160, 100),
         };
         // 切到极光时清掉旧图片文件
         if (old.file) {
