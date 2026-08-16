@@ -35,15 +35,39 @@ DSH 启动时**只读** `~/.dsh/profiles/web/package.json`（C 盘，DSH_HOME �
 
 `profile/` 下没有 `cordis.yml` / `cordis.patch.yml`——它们由 DSH 启动时自动生成/重写，不需要提交。
 
-## 加一个新插件（三步）
+## 加一个新插件（四步）
 
 1. 在 `plugins/<名字>/` 写插件源码（宿主半 `lib/index.js`，可选客户端半 `lib/client.js`）。
 2. 在 `profile/package.json` 注册两处：
    - `dsh.profile.bundles` 数组加 `"<名字>"`
    - `dependencies` 加 `"<名字>": "link:../plugins/<名字>"`
-3. `git add -A && git commit && git push`
+3. **跑 `.\setup.ps1`（本机生效，必做）**：把模板同步到 C 盘 profile + 建软链，然后重启 exe。
+4. `git add -A && git commit && git push`（另一台机器 clone 后跑 setup.ps1 得到同样结果）。
 
-本机生效：跑 `.\setup.ps1`，然后重启 exe。
+## 第三方插件（从网上装的）
+
+网上插件的默认安装命令（`dsh plugin add <pkg>` / `npm i <pkg>`）会装进 **C 盘 profile 的 node_modules**，不进 Git——另一台机器拿不到。要进仓库，**默认用方式 1（vendor 进 plugins/）**；确定不改源码、且插件已发布 npm 时，才用方式 2：
+
+### 方式 1：vendor 源码进 `plugins/`（想改/检查源码，或插件没发布 npm）
+
+```powershell
+# 示例：vendor @liustack/modlens@3.16.7
+Push-Location $env:TEMP
+npm pack @liustack/modlens@3.16.7            # 下载「发布版包」→ liustack-modlens-3.16.7.tgz
+tar -xzf liustack-modlens-3.16.7.tgz -C D:\DeepseekHarness\plugins
+Rename-Item D:\DeepseekHarness\plugins\package modlens
+Pop-Location
+```
+
+然后按上面「加一个新插件」注册：`dependencies` 写 `"<名字>": "link:../plugins/<名字>"`。
+
+> 用 `npm pack`（发布版包，含构建产物 `dist/`），别 `git clone`（源码仓库，含 `src/` + devDeps，可能没构建）。vendor 后删掉包内 `node_modules` / `package-lock.json`。
+
+### 方式 2：只记版本号（已发布 npm、不用改源码）
+
+`dependencies` 写 `"<pkg>": "<version>"`（普通版本号，不用 `link:`），setup.ps1 / pnpm 每台机器从 npm 拉。
+
+> 参考：`@liustack/modlens` 走方式 1（发布版包 vendor 在 `plugins/modlens/`）。
 
 ## 另一台机器：从零跑起 exe
 
