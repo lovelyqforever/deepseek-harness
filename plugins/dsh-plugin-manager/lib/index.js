@@ -11,7 +11,8 @@ import { homedir } from "node:os";
 // dsh-plugin-manager 宿主半。
 // 目标：让用户在 Web GUI 的「设置 → 插件 → 插件开关」里用开关控制自有插件的启用/禁用，
 // 不再敲命令行。开关本质 = 在 profile 的 cordis.patch.yml（用户 patch 层）里加/删
-// `- id: <包名>\n  disabled: true`，且同时写两份：
+// `- id: <入口id>\n  disabled: true`（入口 id 从每个插件自己的 cordis.patch.yml 读取，
+// 避免 `@liustack/modlens` 这类「入口 id ≠ 包名」的例外写错 id），且同时写两份：
 //   1) C 盘 live：~/.dsh/profiles/<profile>/cordis.patch.yml（本次重启后生效）
 //   2) 仓库模板：<repo>/profile/cordis.patch.yml（进 Git，防止 setup.ps1 覆盖回滚）
 // 不删任何依赖/源码，不改 bundles/dependencies，不自动 commit。
@@ -148,6 +149,19 @@ function readVersion(linkTarget) {
   }
 }
 
+// 从插件自己的 cordis.patch.yml 读真实入口 id（bundle patch 的 `- id: X`）。
+// 有些插件入口 id ≠ 包名（如 @liustack/modlens 的入口 id 是 modlens），
+// 用包名当 id 去写 disabled 会匹配不到，所以以真实入口 id 为准。
+function readEntryId(linkTarget) {
+  try {
+    const text = readFileSync(join(linkTarget, "cordis.patch.yml"), "utf8");
+    const m = /^\s*- id:\s*["']?([^"'\s]+)["']?/m.exec(text);
+    return m ? m[1] : null;
+  } catch {
+    return null;
+  }
+}
+
 // 列出「我的插件」及启用状态
 function listPlugins(config) {
   const { deps, repoRoot } = readLiveDependencies(config);
@@ -159,10 +173,12 @@ function listPlugins(config) {
   for (const [pkgName, spec] of Object.entries(deps)) {
     if (typeof spec !== "string" || !spec.startsWith("link:")) continue;
     if (pkgName === MANAGER_NAME) continue;
+    const linkTarget = spec.slice("link:".length);
+    const entryId = readEntryId(linkTarget) || pkgName;
     plugins.push({
       name: pkgName,
-      enabled: !disabled.has(pkgName),
-      version: readVersion(spec.slice("link:".length)),
+      enabled: !disabled.has(entryId),
+      version: readVersion(linkTarget),
     });
   }
   plugins.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
@@ -181,6 +197,7 @@ function setDisabled(config, name, disabled) {
   if (name === MANAGER_NAME) {
     throw new Error("cannot toggle the manager itself");
   }
+  const entryId = readEntryId(deps[name].slice("link:".length)) || name;
   const live = livePatchFile(config);
   const tpl = templatePatchFile(config, repoRoot);
 
@@ -189,8 +206,8 @@ function setDisabled(config, name, disabled) {
     for (const n of parseDisabledNames(readPatchText(tpl))) names.add(n);
   }
 
-  if (disabled) names.add(name);
-  else names.delete(name);
+  if (disabled) names.add(entryId);
+  else names.delete(entryId);
 
   const content = serializePatch(names);
   atomicWrite(live, content);
