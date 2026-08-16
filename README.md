@@ -12,8 +12,7 @@ deepseek-harness/
 │  ├─ dsh-update-check/   # 更新检查
 │  ├─ dsh-titlebar/       # 标题栏
 │  ├─ dsh-background/     # 背景图
-│  ├─ dsh-example/        # 教学示例（仅源码，未注册）
-│  └─ modlens/            # 第三方 @liustack/modlens（vendor 源码）
+│  └─ dsh-example/        # 教学示例（仅源码，未注册）
 ├─ profile/               # profile 模板（进 Git；DSH 不直接读，见下）
 │  ├─ package.json        # ★ 唯一要改的清单：bundles + dependencies
 │  └─ pnpm-workspace.yaml # pnpm 扁平安装配置
@@ -51,11 +50,11 @@ DSH 启动时**只读** `~/.dsh/profiles/web/package.json`（C 盘，DSH_HOME �
 ### 方式 1：vendor 源码进 `plugins/`（想改/检查源码，或插件没发布 npm）
 
 ```powershell
-# 示例：vendor @liustack/modlens@3.16.7
+# 示例：vendor 已发布包 <pkg>@<version>
 Push-Location $env:TEMP
-npm pack @liustack/modlens@3.16.7            # 下载「发布版包」→ liustack-modlens-3.16.7.tgz
-tar -xzf liustack-modlens-3.16.7.tgz -C D:\DeepseekHarness\plugins
-Rename-Item D:\DeepseekHarness\plugins\package modlens
+npm pack <pkg>@<version>                     # 下载发布版包 → 一个 .tgz
+tar -xzf <下载出的 .tgz> -C D:\DeepseekHarness\plugins
+Rename-Item D:\DeepseekHarness\plugins\package <pkg>
 Pop-Location
 ```
 
@@ -66,8 +65,6 @@ Pop-Location
 ### 方式 2：只记版本号（已发布 npm、不用改源码）
 
 `dependencies` 写 `"<pkg>": "<version>"`（普通版本号，不用 `link:`），setup.ps1 / pnpm 每台机器从 npm 拉。
-
-> 参考：`@liustack/modlens` 走方式 1（发布版包 vendor 在 `plugins/modlens/`）。
 
 ## 另一台机器：从零跑起 exe
 
