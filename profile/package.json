@@ -11,7 +11,8 @@
         "dsh-update-check",
         "dsh-titlebar",
         "dsh-background",
-        "@liustack/modlens"
+        "@liustack/modlens",
+        "dsh-plugin-manager"
       ]
     }
   },
@@ -21,6 +22,7 @@
     "dsh-update-check": "link:../plugins/dsh-update-check",
     "dsh-titlebar": "link:../plugins/dsh-titlebar",
     "dsh-background": "link:../plugins/dsh-background",
-    "@liustack/modlens": "link:../plugins/modlens"
+    "@liustack/modlens": "link:../plugins/modlens",
+    "dsh-plugin-manager": "link:../plugins/dsh-plugin-manager"
   }
 }

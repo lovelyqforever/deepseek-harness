@@ -79,8 +79,13 @@ $pkgText = (Get-Content (Join-Path $ProfileSrc 'package.json') -Raw)
 $pkgText = $pkgText.Replace('link:../plugins', "link:$pluginsDir")
 Set-Content -Path (Join-Path $ProfileLink 'package.json') -Value $pkgText -Encoding utf8
 
-# 复制 pnpm 配置（pnpm install 需要它；cordis.yml / cordis.patch.yml 由 DSH 启动时自动生成，不必复制）
+# 复制 pnpm 配置（pnpm install 需要它）
 Copy-Item (Join-Path $ProfileSrc 'pnpm-workspace.yaml') (Join-Path $ProfileLink 'pnpm-workspace.yaml') -Force
+# 复制用户 patch 层（dsh-plugin-manager 的「启用/禁用」开关写在这里；cordis.yml 仍由 DSH 启动时自动生成）
+$patchSrc = Join-Path $ProfileSrc 'cordis.patch.yml'
+if (Test-Path $patchSrc) {
+    Copy-Item $patchSrc (Join-Path $ProfileLink 'cordis.patch.yml') -Force
+}
 Write-Ok "profile 已生成，插件绝对路径：$pluginsDir"
 
 # ---------- 4) pnpm install ----------

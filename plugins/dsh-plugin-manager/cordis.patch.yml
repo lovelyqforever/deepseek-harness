@@ -1,0 +1,11 @@
+# dsh-plugin-manager 的 bundle patch 层：往插件树新增一条宿主条目。
+# 宿主半负责读写两份 cordis.patch.yml（C 盘 live + 仓库模板），并通过
+# webServer 暴露 /plugins/plugin-manager/* 端点；客户端半渲染「插件开关」标签页。
+- insert:
+    - id: dsh-plugin-manager
+      name: 'dsh-plugin-manager'
+      config:
+        # 目标 profile 目录名（仓库约定为 web）
+        profileName: 'web'
+        # 可选：仓库模板目录的绝对路径；留空则从 live profile 里的 link: 依赖自动反推。
+        templateProfileDir: ''
