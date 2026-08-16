@@ -206,6 +206,7 @@ export function apply(ctx, config) {
             scrim: clampNum(body.scrim, 0, 0.85, 0.38),
             frostAlpha: clampNum(body.frostAlpha, 0.05, 1, 0.6),
             blur: clampNum(body.blur, 0, 40, 16),
+            edge: clampNum(body.edge, 0, 0.6, 0.25),
           },
         };
         writeConfig(next);

@@ -7,7 +7,7 @@ window.__ModuleLoader__.load({
     const react = require("react");
 
     // =====================================================================
-    // CSS（配置卡外观对齐内置「插件配置」卡片；背景层/透明化单独注入）
+    // CSS（配置卡外观对齐内置「插件配置」卡片；scrim 只作用于我们自己的背景层）
     // =====================================================================
     const css = [
       ".dsbg_card{border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-3);border-radius:12px;list-style:none;transition:border-color .16s,background .16s}",
@@ -43,6 +43,8 @@ window.__ModuleLoader__.load({
       ".dsbg_sliderLabel{color:var(--dsw-alias-label-secondary);font-size:12px;line-height:1.5}",
       ".dsbg_sliderValue{color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:1.5;font-variant-numeric:tabular-nums}",
       ".dsbg_sliderRow input[type=range]{width:100%;margin:0;accent-color:var(--dsw-alias-brand-primary)}",
+      // 压暗层：只叠加在我们自己注入的背景层上，不碰 DSH 任何元素
+      "#dsh-background-layer::after{content:'';position:absolute;inset:0;background:rgba(0,0,0,var(--dsbg-scrim,.38));pointer-events:none}",
     ].join("");
 
     const tagId = "dsh-background/styles";
@@ -54,40 +56,9 @@ window.__ModuleLoader__.load({
       document.head.appendChild(tag);
     }
 
-    // 有背景时注入的可读性样式（作用域 body[data-dsh-background]，清除背景时移除）：
-    // 1) 压暗层：背景层 ::after 叠半透明黑，把壁纸整体压暗，让文字跳出；
-    // 2) 磨砂玻璃：只给主要浮层面板（侧栏/弹窗/气泡/输入框/工具栏等）加半透明底色 +
-    //    backdrop-filter 模糊，恢复面板边界；底色用 --dsbg-frost（按明暗主题区分）；
-    // 3) 一刀切透明：其余小元素（按钮/开关/进度条）保持背景透明，透出磨砂面板。
-    const READABILITY_CSS = [
-      "#dsh-background-layer::after{content:'';position:absolute;inset:0;background:rgba(0,0,0,var(--dsbg-scrim,.38));pointer-events:none}",
-      "body[data-dsh-background]{--dsbg-frost:rgba(252,252,253,var(--dsbg-frost-alpha,.6))}",
-      "body[data-dsh-background][data-ds-dark-theme]{--dsbg-frost:rgba(28,28,30,var(--dsbg-frost-alpha,.6))}",
-      "body[data-dsh-background] *{background-color:transparent!important}",
-      "body[data-dsh-background] :is([class*='_rail_'],[class*='_dialog_'],[class*='_backdrop_'],[class*='_list_'],[class*='_bubble_'],[class*='_prompt_'],[class*='_promptLine_'],[class*='_toolbar_'],[class*='_header_'],[class*='_footer_'],[class*='_pill_'],[class*='_sideTop_'],[class*='_content_']){background-color:var(--dsbg-frost)!important;-webkit-backdrop-filter:blur(var(--dsbg-blur,16px)) saturate(1.4);backdrop-filter:blur(var(--dsbg-blur,16px)) saturate(1.4)}",
-    ].join("");
-
-    function setTransparency(on) {
-      const id = "dsh-background-transparency";
-      let tag = document.getElementById(id);
-      if (on) {
-        if (!document.body.hasAttribute("data-dsh-background")) {
-          document.body.setAttribute("data-dsh-background", "");
-        }
-        if (!tag) {
-          tag = document.createElement("style");
-          tag.id = id;
-          tag.textContent = READABILITY_CSS;
-          document.head.appendChild(tag);
-        }
-      } else {
-        document.body.removeAttribute("data-dsh-background");
-        if (tag) tag.remove();
-      }
-    }
-
-    // 可读性参数：把滑杆值写入 CSS 变量（--dsbg-scrim / --dsbg-frost-alpha / --dsbg-blur），
-    // READABILITY_CSS 引用这些变量。范围钳制 + 默认值兜底，写不到 documentElement 时静默跳过。
+    // =====================================================================
+    // 工具
+    // =====================================================================
     function clampNum(v, min, max, def) {
       const n = typeof v === "number" && isFinite(v) ? v : def;
       return Math.min(max, Math.max(min, n));
@@ -97,21 +68,12 @@ window.__ModuleLoader__.load({
         scrim: clampNum(r && r.scrim, 0, 0.85, 0.38),
         frostAlpha: clampNum(r && r.frostAlpha, 0.05, 1, 0.6),
         blur: clampNum(r && r.blur, 0, 40, 16),
+        edge: clampNum(r && r.edge, 0, 0.6, 0.25),
       };
-    }
-    function applyReadability(r) {
-      const n = normalizeReadability(r);
-      const root = document.documentElement;
-      if (root && root.style) {
-        root.style.setProperty("--dsbg-scrim", String(n.scrim));
-        root.style.setProperty("--dsbg-frost-alpha", String(n.frostAlpha));
-        root.style.setProperty("--dsbg-blur", n.blur + "px");
-      }
-      return n;
     }
 
     // =====================================================================
-    // 背景源注册表（可扩展）：以后加 css-wave / canvas / webgl / video 只加一个模块
+    // 背景源注册表（可扩展）
     // =====================================================================
     const providers = {
       image: {
@@ -135,7 +97,7 @@ window.__ModuleLoader__.load({
     };
 
     // =====================================================================
-    // 背景层 + 状态 store（配置卡与背景层共享，通过 fetch 读写宿主端点）
+    // 背景层（z-index 0，铺满；scrim 用 ::after，blur 用 filter）
     // =====================================================================
     function ensureLayer() {
       let el = document.getElementById("dsh-background-layer");
@@ -149,23 +111,122 @@ window.__ModuleLoader__.load({
       return el;
     }
 
+    // =====================================================================
+    // 主题 token 覆盖（正确做法）：覆盖 --dsw-alias-* / --dsw-specific-* 让所有
+    // 表面 + 按钮 + markdown 代码块半透明，壁纸从 bg-base 透出。overrideTokens 只校验
+    // 值是 { light, dark }，不校验 token 名，因此可覆盖 design-platform.css 里的全部 token。
+    // =====================================================================
+    function buildTokens(r) {
+      const a = r.frostAlpha;
+      const e = r.edge;
+      const over = Math.min(1, a + 0.12);
+      const pct = Math.round(a * 100);
+      function surf(l, d) { return { light: "rgba(" + l + "," + a + ")", dark: "rgba(" + d + "," + a + ")" }; }
+      function border(la, da) { return { light: "rgba(19,45,83," + la + ")", dark: "rgba(148,180,220," + da + ")" }; }
+      // 保留原色相、只降透明度：color-mix 引用原始 static/alias token
+      function mix(l, d) {
+        return {
+          light: "color-mix(in srgb, " + l + " " + pct + "%, transparent)",
+          dark: "color-mix(in srgb, " + d + " " + pct + "%, transparent)",
+        };
+      }
+      return {
+        // —— 底背景透明，让壁纸透出 ——
+        "--dsw-alias-bg-base": { light: "transparent", dark: "transparent" },
+        // —— 浮层表面：半透明磨砂 ——
+        "--dsw-alias-bg-layer-1": surf("255,255,255", "17,26,39"),
+        "--dsw-alias-bg-layer-2": surf("236,242,250", "22,33,48"),
+        "--dsw-alias-bg-layer-3": surf("236,242,250", "28,38,53"),
+        "--dsw-alias-bg-overlay": { light: "rgba(244,248,253," + over + ")", dark: "rgba(17,26,39," + over + ")" },
+        "--dsw-alias-bg-module-platform": surf("255,255,255", "17,26,39"),
+        "--dsw-alias-bg-multi-select": surf("255,255,255", "22,33,48"),
+        // —— 特定表面 ——
+        "--dsw-specific-sidebar-fill": surf("244,248,253", "12,18,27"),
+        "--dsw-specific-input-major": surf("255,255,255", "17,26,39"),
+        "--dsw-specific-login-input": surf("244,248,253", "12,18,27"),
+        "--dsw-specific-menu": surf("236,242,250", "28,38,53"),
+        "--dsw-specific-selector": surf("244,248,253", "22,33,48"),
+        "--dsw-specific-tip": surf("244,248,253", "22,33,48"),
+        "--dsw-specific-bubble": surf("236,242,250", "22,33,48"),
+        "--dsw-specific-bubble-highlight": surf("244,248,253", "28,38,53"),
+        "--dsw-specific-sidebar-nav-item-active": surf("236,242,250", "22,33,48"),
+        "--dsw-specific-sidebar-nav-item-hover": surf("236,242,250", "28,38,53"),
+        // —— 气泡 / 提示 ——
+        "--dsw-alias-toast-bg": surf("255,255,255", "22,33,48"),
+        "--dsw-alias-tooltip-bg": surf("255,255,255", "22,33,48"),
+        // —— 按钮（保留色相、只降透明度）："新会话" 按钮与余额组件共用 elevated-fill ——
+        "--dsw-alias-button-elevated-fill": mix("var(--dsw-static-neutral-bluish-00)", "var(--dsw-static-neutral-bluish-750)"),
+        "--dsw-alias-button-floating-fill": mix("var(--dsw-static-neutral-bluish-00)", "var(--dsw-static-neutral-bluish-850)"),
+        "--dsw-alias-button-contrast-fill": mix("var(--dsw-static-neutral-bluish-700)", "var(--dsw-static-neutral-bluish-50)"),
+        "--dsw-alias-button-primary-fill": mix("var(--dsw-alias-brand-primary)", "var(--dsw-alias-brand-primary)"),
+        "--dsw-alias-button-info-fill": mix("var(--dsw-static-deepseek-500)", "var(--dsw-static-deepseek-400)"),
+        "--dsw-alias-button-primary-dimmed": mix("var(--dsw-static-neutral-bluish-100)", "var(--dsw-static-neutral-bluish-750)"),
+        "--dsw-alias-button-ghost-active-fill": mix("var(--dsw-static-neutral-bluish-100)", "var(--dsw-static-neutral-bluish-750)"),
+        // —— markdown 代码块 / 内联代码 / 引用（对话框里的 token 表格等）——
+        "--dsw-alias-markdown-code-block": mix("var(--dsw-static-neutral-bluish-50)", "var(--dsw-static-neutral-bluish-900)"),
+        "--dsw-alias-markdown-code-block-banner": mix("var(--dsw-static-neutral-bluish-50)", "var(--dsw-static-neutral-bluish-850)"),
+        "--dsw-alias-markdown-inline-code": mix("var(--dsw-static-neutral-bluish-100)", "var(--dsw-static-neutral-bluish-850)"),
+        "--dsw-alias-markdown-code-segment-selected": mix("var(--dsw-static-neutral-bluish-00)", "var(--dsw-static-neutral-bluish-800)"),
+        "--dsw-alias-markdown-code-segment-unselected": mix("var(--dsw-static-neutral-bluish-75)", "var(--dsw-static-neutral-bluish-900)"),
+        "--dsw-alias-markdown-tag": mix("var(--dsw-static-neutral-bluish-75)", "var(--dsw-static-neutral-bluish-850)"),
+        "--dsw-alias-markdown-citation": mix("var(--dsw-static-neutral-bluish-100)", "var(--dsw-static-neutral-bluish-800)"),
+        "--dsw-alias-markdown-placeholder": mix("var(--dsw-static-neutral-bluish-60)", "var(--dsw-static-neutral-bluish-850)"),
+        // —— 描边 ——
+        "--dsw-alias-border-l1": border(e * 0.5 + 0.02, e * 0.55 + 0.02),
+        "--dsw-alias-border-l2": border(e * 0.9 + 0.04, e * 0.95 + 0.04),
+        "--dsw-alias-border-l2-darkmode-thin": border(e * 0.7 + 0.03, e * 0.7 + 0.03),
+        "--dsw-alias-border-l3": border(e * 1.1 + 0.05, e * 1.1 + 0.05),
+        "--dsw-alias-border-l4": border(e * 1.3 + 0.06, e * 1.3 + 0.06),
+      };
+    }
+
+    let tokenDisposer = null;
+    let pluginCtx = null;
+
+    function applyTokens(r) {
+      if (!pluginCtx || !pluginCtx.theme || typeof pluginCtx.theme.overrideTokens !== "function") return;
+      if (tokenDisposer) { try { tokenDisposer(); } catch (e) {} tokenDisposer = null; }
+      try {
+        tokenDisposer = pluginCtx.theme.overrideTokens("dsh-background", buildTokens(r));
+      } catch (e) {
+        console.warn("[dsh-background] overrideTokens failed:", e);
+        tokenDisposer = null;
+      }
+    }
+    function clearTokens() {
+      if (tokenDisposer) { try { tokenDisposer(); } catch (e) {} tokenDisposer = null; }
+    }
+
+    // 把可读性参数落到 DOM：压暗 → 背景层 ::after；模糊 → 背景层 filter；磨砂/描边 → token 覆盖
+    function applyReadabilityLive(r) {
+      const n = normalizeReadability(r);
+      const layer = ensureLayer();
+      layer.style.setProperty("--dsbg-scrim", String(n.scrim));
+      layer.style.filter = "blur(" + n.blur + "px)";
+      applyTokens(n);
+    }
+
     function applyDom(s) {
       const layer = ensureLayer();
       const provider = providers[s && s.provider];
       if (provider) provider.apply(layer, s);
-      applyReadability(s && s.readability);
-      setTransparency(true);
+      applyReadabilityLive(s && s.readability);
     }
 
     function clearDom() {
       const layer = document.getElementById("dsh-background-layer");
       if (layer) {
         for (const key in providers) providers[key].clear(layer);
+        layer.style.removeProperty("--dsbg-scrim");
+        layer.style.filter = "";
       }
-      setTransparency(false);
+      clearTokens();
     }
 
-    let state = null; // { provider, file, url } 或 null（未设置）
+    // =====================================================================
+    // 状态 store + fetch（与宿主端点通信）
+    // =====================================================================
+    let state = null;
     let loaded = false;
     let loading = null;
     const listeners = new Set();
@@ -265,7 +326,7 @@ window.__ModuleLoader__.load({
     function BackgroundCard() {
       const saved = useBackground();
       const [open, setOpen] = react.useState(false);
-      const [pending, setPending] = react.useState(null); // null | { dataUrl, name }
+      const [pending, setPending] = react.useState(null);
       const [saving, setSaving] = react.useState(false);
       const [failed, setFailed] = react.useState(false);
 
@@ -281,7 +342,7 @@ window.__ModuleLoader__.load({
       function changeReadability(key, value) {
         const next = { ...readability, [key]: value };
         setReadability(next);
-        applyReadability(next);
+        applyReadabilityLive(next);
         if (saveTimer.current) clearTimeout(saveTimer.current);
         saveTimer.current = setTimeout(function () {
           saveReadability(next).catch(function () {});
@@ -368,7 +429,8 @@ window.__ModuleLoader__.load({
             react.createElement(SliderRow, { label: "压暗深度", valueText: Math.round(readability.scrim * 100) + "%", min: 0, max: 0.85, step: 0.01, value: readability.scrim, onChange: function (v) { changeReadability("scrim", v); } }),
             react.createElement(SliderRow, { label: "磨砂不透明度", valueText: Math.round(readability.frostAlpha * 100) + "%", min: 0.05, max: 1, step: 0.01, value: readability.frostAlpha, onChange: function (v) { changeReadability("frostAlpha", v); } }),
             react.createElement(SliderRow, { label: "模糊强度", valueText: Math.round(readability.blur) + "px", min: 0, max: 40, step: 1, value: readability.blur, onChange: function (v) { changeReadability("blur", v); } }),
-            react.createElement("p", { className: "dsbg_hint" }, "拖动立即生效并自动保存；数值越大，文字越清楚、面板越实。")
+            react.createElement(SliderRow, { label: "描边强度", valueText: Math.round(readability.edge * 100) + "%", min: 0, max: 0.6, step: 0.01, value: readability.edge, onChange: function (v) { changeReadability("edge", v); } }),
+            react.createElement("p", { className: "dsbg_hint" }, "拖动立即生效并自动保存；数值越大，文字越清楚、面板越实、描边越明显。")
           ) : null,
           react.createElement("div", { className: "dsbg_footer" },
             failed ? react.createElement("p", { className: "dsbg_failed", role: "status" }, "操作失败") : null,
@@ -383,9 +445,11 @@ window.__ModuleLoader__.load({
     // =====================================================================
     // 客户端插件 apply
     // =====================================================================
-    const inject = ["slots"];
+    const inject = ["theme", "slots"];
 
     function apply(ctx) {
+      pluginCtx = ctx;
+
       ctx.slots.inject("settings.plugin.item", function () {
         return ctx.slots.register({
           name: "settings.plugin.item",
