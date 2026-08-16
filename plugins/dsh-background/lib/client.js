@@ -43,6 +43,15 @@ window.__ModuleLoader__.load({
       ".dsbg_sliderLabel{color:var(--dsw-alias-label-secondary);font-size:12px;line-height:1.5}",
       ".dsbg_sliderValue{color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:1.5;font-variant-numeric:tabular-nums}",
       ".dsbg_sliderRow input[type=range]{width:100%;margin:0;accent-color:var(--dsw-alias-brand-primary)}",
+      // 背景类型切换 + 极光配色
+      ".dsbg_seg{display:flex;gap:6px;border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-3);border-radius:8px;padding:3px}",
+      ".dsbg_segBtn{appearance:none;font:inherit;cursor:pointer;flex:1;border:0;border-radius:6px;padding:5px 10px;font-size:12px;line-height:1.5;color:var(--dsw-alias-label-secondary);background:0 0}",
+      ".dsbg_segBtn[data-active=true]{background:var(--dsw-alias-bg-module-platform);color:var(--dsw-alias-label-primary);font-weight:500}",
+      ".dsbg_palette{display:flex;gap:6px;flex-wrap:wrap}",
+      ".dsbg_paletteBtn{appearance:none;font:inherit;cursor:pointer;border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-3);color:var(--dsw-alias-label-secondary);border-radius:8px;padding:6px 10px;font-size:12px;line-height:1.5;display:flex;align-items:center;gap:6px}",
+      ".dsbg_paletteBtn[data-active=true]{border-color:var(--dsw-alias-brand-primary);color:var(--dsw-alias-label-primary)}",
+      ".dsbg_swatches{display:flex;gap:3px}",
+      ".dsbg_swatch{width:14px;height:14px;border-radius:4px;border:1px solid var(--dsw-alias-border-l2)}",
       // 压暗层：只叠加在我们自己注入的背景层上，不碰 DSH 任何元素
       "#dsh-background-layer::after{content:'';position:absolute;inset:0;background:rgba(0,0,0,var(--dsbg-scrim,.38));pointer-events:none}",
     ].join("");
@@ -73,6 +82,243 @@ window.__ModuleLoader__.load({
     }
 
     // =====================================================================
+    // 动态极光（WebGL2 单遍 shader：域扭曲噪声 + 漩涡 + 三色柔和混合）
+    // 移植自 deepseek.com join 区块背景的 DISPLAY_SHADER（与参考插件同源）。
+    // 单遍 + 1x1 空流场 → influence=0，等价于参考插件在 Windows 上（无鼠标轨迹）的观感。
+    // =====================================================================
+    const AURORA_PALETTES = {
+      blue: { label: "蓝白", colors: ["#8AA3D6", "#FFFFFF", "#FFFFFF"] },
+      violet: { label: "紫粉", colors: ["#A78BFA", "#F9A8D4", "#FFFFFF"] },
+      teal: { label: "青绿", colors: ["#5EEAD4", "#93C5FD", "#FFFFFF"] },
+    };
+
+    function normalizeAurora(p) {
+      return {
+        speed: clampNum(p && p.speed, 1, 30, 14),
+        distortion: clampNum(p && p.distortion, 0, 40, 20),
+        swirl: clampNum(p && p.swirl, 0, 24, 12),
+        palette: AURORA_PALETTES[p && p.palette] ? p.palette : "blue",
+      };
+    }
+
+    const AURORA_VERTEX = `#version 300 es
+in vec4 a_position;
+out vec2 vUv;
+void main() {
+  vUv = a_position.xy * 0.5 + 0.5;
+  gl_Position = a_position;
+}
+`;
+
+    const AURORA_DISPLAY = `#version 300 es
+precision mediump float;
+in vec2 vUv;
+uniform float u_time;
+uniform float u_pixelRatio;
+uniform vec2 u_resolution;
+uniform float u_scale;
+uniform float u_rotation;
+uniform vec4 u_color1, u_color2, u_color3;
+uniform float u_colorCount;
+uniform float u_proportion;
+uniform float u_softness;
+uniform float u_shape;
+uniform float u_shapeScale;
+uniform float u_distortion;
+uniform float u_swirl;
+uniform float u_swirlIterations;
+uniform vec2 u_offset;
+uniform sampler2D u_flowmap;
+uniform float u_distortBoost;
+uniform float u_noiseBoost;
+uniform float u_swirlBoost;
+out vec4 fragColor;
+
+#define TWO_PI 6.28318530718
+#define PI 3.14159265358979323846
+
+vec2 rotate(vec2 uv, float th) { return mat2(cos(th), sin(th), -sin(th), cos(th)) * uv; }
+float random(vec2 st) { return fract(sin(dot(st.xy, vec2(12.9898, 78.233))) * 43758.5453123); }
+float noise(vec2 st) {
+  vec2 i = floor(st); vec2 f = fract(st);
+  float a = random(i), b = random(i + vec2(1,0)), c = random(i + vec2(0,1)), d = random(i + vec2(1,1));
+  vec2 u = f*f*(3.0-2.0*f);
+  return mix(mix(a,b,u.x), mix(c,d,u.x), u.y);
+}
+
+vec3 blend_multi(float mixer, float softness) {
+  float edge = 1.0 - softness;
+  vec3 col = u_color1.rgb;
+  if (u_colorCount > 1.5) { col = mix(col, u_color2.rgb, smoothstep(0.0 + 0.35*edge, 0.7 - 0.35*edge, mixer)); }
+  if (u_colorCount > 2.5) { col = mix(col, u_color3.rgb, smoothstep(0.3 + 0.35*edge, 1.0 - 0.35*edge, mixer)); }
+  return col;
+}
+
+void main() {
+  vec2 uv = gl_FragCoord.xy / u_resolution.xy;
+  float t = .5 * u_time;
+  float ns = .0005 + .006 * u_scale;
+  uv -= .5; uv *= (ns * u_resolution); uv = rotate(uv, u_rotation * .5 * PI);
+  uv /= u_pixelRatio; uv += .5; uv += u_offset;
+
+  vec2 fragUV = gl_FragCoord.xy / u_resolution.xy;
+  vec4 flow = texture(u_flowmap, fragUV);
+  float influence = flow.r;
+  vec2 flowDir = (flow.gb - 0.5) * 2.0;
+
+  float n1 = noise(uv + t), n2 = noise(uv*2. - t);
+  float angle = n1 * TWO_PI;
+
+  float totalDistortion = u_distortion + influence * u_distortBoost;
+  uv.x += 4. * totalDistortion * n2 * cos(angle);
+  uv.y += 4. * totalDistortion * n2 * sin(angle);
+
+  uv += flowDir * influence * 0.15;
+
+  if (influence > 0.001) {
+    float localNoise = noise(uv * 2.0 + t * 1.5);
+    uv += influence * u_noiseBoost * vec2(cos(localNoise * TWO_PI), sin(localNoise * TWO_PI));
+  }
+
+  float iters = ceil(clamp(u_swirlIterations, 1., 30.));
+  float swirlAmt = clamp(u_swirl, 0., 2.) + influence * u_swirlBoost;
+  for (float i = 1.; i <= 30.0; i++) {
+    if (i > iters) break;
+    uv.x += swirlAmt / i * cos(t + i*1.5*uv.y);
+    uv.y += swirlAmt / i * cos(t + i*1.*uv.x);
+  }
+
+  float proportion = clamp(u_proportion, 0., 1.);
+  vec2 cuv = uv * (.5 + 3.5 * u_shapeScale);
+  float shape = .5 + .5 * sin(cuv.x) * cos(cuv.y);
+  float mixer = shape + .48 * sign(proportion - .5) * pow(abs(proportion - .5), .5);
+  vec3 col = blend_multi(mixer, clamp(u_softness, 0., 1.));
+  fragColor = vec4(col, 1.0);
+}
+`;
+
+    function attachAurora(canvas, params) {
+      const gl = canvas.getContext("webgl2", { alpha: true, premultipliedAlpha: false, powerPreference: "low-power" });
+      const fail = function () { return { setParams: function () {}, dispose: function () {} }; };
+      if (!gl) return fail();
+
+      function compile(type, source) {
+        const shader = gl.createShader(type);
+        gl.shaderSource(shader, source);
+        gl.compileShader(shader);
+        if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+          console.error("[dsh-background] aurora shader:", gl.getShaderInfoLog(shader));
+          return null;
+        }
+        return shader;
+      }
+      const vertex = compile(gl.VERTEX_SHADER, AURORA_VERTEX);
+      const fragment = compile(gl.FRAGMENT_SHADER, AURORA_DISPLAY);
+      if (!vertex || !fragment) return fail();
+      const program = gl.createProgram();
+      gl.attachShader(program, vertex);
+      gl.attachShader(program, fragment);
+      gl.linkProgram(program);
+      if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+        console.error("[dsh-background] aurora link:", gl.getProgramInfoLog(program));
+        return fail();
+      }
+
+      const UNIFORMS = ["time", "pixelRatio", "resolution", "scale", "rotation", "offset", "color1", "color2", "color3", "colorCount", "proportion", "softness", "shape", "shapeScale", "distortion", "swirl", "swirlIterations", "flowmap", "distortBoost", "noiseBoost", "swirlBoost"];
+      const u = {};
+      for (const n of UNIFORMS) u[n] = gl.getUniformLocation(program, "u_" + n);
+
+      const quad = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, quad);
+      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
+      const apos = gl.getAttribLocation(program, "a_position");
+
+      // 1x1 空流场：influence=0 → 纯"噪声+漩涡"，即参考插件在 Windows 上的观感
+      const flowTex = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, flowTex);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([0, 128, 128, 255]));
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+      function hexToRgb(hex) {
+        const s = hex.replace("#", "");
+        return [parseInt(s.slice(0, 2), 16) / 255, parseInt(s.slice(2, 4), 16) / 255, parseInt(s.slice(4, 6), 16) / 255];
+      }
+
+      let width = 0, height = 0;
+      function resize() {
+        const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
+        const w = Math.max(1, Math.round(canvas.clientWidth * dpr));
+        const h = Math.max(1, Math.round(canvas.clientHeight * dpr));
+        if (w !== width || h !== height) {
+          width = w; height = h;
+          canvas.width = w; canvas.height = h;
+        }
+      }
+
+      const current = { ...params };
+      const start = performance.now();
+      let raf = 0;
+      let previous = 0;
+      const step = 1000 / 30;
+
+      function frame(now) {
+        raf = requestAnimationFrame(frame);
+        if (now - previous < step) return;
+        previous = now - ((now - previous) % step);
+        resize();
+
+        gl.viewport(0, 0, width, height);
+        gl.useProgram(program);
+        gl.bindBuffer(gl.ARRAY_BUFFER, quad);
+        gl.enableVertexAttribArray(apos);
+        gl.vertexAttribPointer(apos, 2, gl.FLOAT, false, 0, 0);
+
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, flowTex);
+        gl.uniform1i(u.flowmap, 0);
+
+        const p = current;
+        gl.uniform1f(u.time, (performance.now() - start) * 0.001 * (p.speed / 100));
+        gl.uniform1f(u.pixelRatio, Math.min(window.devicePixelRatio || 1, 1.5));
+        gl.uniform2f(u.resolution, width, height);
+        gl.uniform1f(u.scale, 0.5);
+        gl.uniform1f(u.rotation, -5 / 90);
+        gl.uniform2f(u.offset, 0, 65 / 100);
+        const c1 = hexToRgb(p.colors[0]), c2 = hexToRgb(p.colors[1]), c3 = hexToRgb(p.colors[2]);
+        gl.uniform4f(u.color1, c1[0], c1[1], c1[2], 1);
+        gl.uniform4f(u.color2, c2[0], c2[1], c2[2], 1);
+        gl.uniform4f(u.color3, c3[0], c3[1], c3[2], 1);
+        gl.uniform1f(u.colorCount, 3);
+        gl.uniform1f(u.proportion, 50 / 100);
+        gl.uniform1f(u.softness, 100 / 100);
+        gl.uniform1f(u.shape, 0);
+        gl.uniform1f(u.shapeScale, 10 / 100);
+        gl.uniform1f(u.distortion, p.distortion / 100);
+        gl.uniform1f(u.swirl, p.swirl / 50);
+        gl.uniform1f(u.swirlIterations, 8);
+        gl.uniform1f(u.distortBoost, 0);
+        gl.uniform1f(u.noiseBoost, 0);
+        gl.uniform1f(u.swirlBoost, 0);
+        gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+      }
+
+      if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+        frame(performance.now());
+        cancelAnimationFrame(raf);
+      } else {
+        raf = requestAnimationFrame(frame);
+      }
+
+      return {
+        setParams(next) { Object.assign(current, next); },
+        dispose() { cancelAnimationFrame(raf); },
+      };
+    }
+
+    // =====================================================================
     // 背景源注册表（可扩展）
     // =====================================================================
     const providers = {
@@ -92,6 +338,31 @@ window.__ModuleLoader__.load({
           layer.style.backgroundSize = "";
           layer.style.backgroundPosition = "";
           layer.style.backgroundRepeat = "";
+        },
+      },
+      aurora: {
+        id: "aurora",
+        label: "动态极光",
+        apply(layer, opts) {
+          const p = normalizeAurora(opts && opts.params);
+          const colors = AURORA_PALETTES[p.palette].colors;
+          let canvas = layer._dsbgAuroraCanvas;
+          if (!canvas) {
+            canvas = document.createElement("canvas");
+            canvas.style.cssText = "position:absolute;inset:0;width:100%;height:100%;";
+            layer.appendChild(canvas);
+            layer._dsbgAuroraCanvas = canvas;
+          }
+          const shaderParams = { speed: p.speed, distortion: p.distortion, swirl: p.swirl, colors: colors };
+          if (layer._dsbgAuroraHandle) {
+            layer._dsbgAuroraHandle.setParams(shaderParams);
+          } else {
+            layer._dsbgAuroraHandle = attachAurora(canvas, shaderParams);
+          }
+        },
+        clear(layer) {
+          if (layer._dsbgAuroraHandle) { layer._dsbgAuroraHandle.dispose(); layer._dsbgAuroraHandle = null; }
+          if (layer._dsbgAuroraCanvas) { layer._dsbgAuroraCanvas.remove(); layer._dsbgAuroraCanvas = null; }
         },
       },
     };
@@ -206,8 +477,16 @@ window.__ModuleLoader__.load({
       applyTokens(n);
     }
 
+    // 极光参数即时生效（更新运行中的 shader，或在尚未创建时创建）
+    function applyAuroraLive(params) {
+      const layer = ensureLayer();
+      providers.image.clear(layer);
+      providers.aurora.apply(layer, { provider: "aurora", params: params });
+    }
+
     function applyDom(s) {
       const layer = ensureLayer();
+      for (const key in providers) providers[key].clear(layer);
       const provider = providers[s && s.provider];
       if (provider) provider.apply(layer, s);
       applyReadabilityLive(s && s.readability);
@@ -285,6 +564,18 @@ window.__ModuleLoader__.load({
       if (state) setState({ ...state, readability: data.readability });
       return data.readability;
     }
+    async function saveAurora(params) {
+      const res = await fetch("/plugins/background/aurora", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ params: params }),
+      });
+      if (!res.ok) throw new Error("aurora save failed: " + res.status);
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || "aurora save failed");
+      setState({ provider: data.provider, params: data.params, readability: data.readability });
+      return data;
+    }
     function useBackground() {
       const [v, setV] = react.useState(state);
       react.useEffect(function () {
@@ -332,12 +623,24 @@ window.__ModuleLoader__.load({
 
       const hasCurrent = !!saved;
       const dirty = !!pending;
+      const isImage = saved && saved.provider === "image";
+
+      const [mode, setMode] = react.useState(() => (saved && saved.provider === "aurora" ? "aurora" : "image"));
+      react.useEffect(function () {
+        setMode(saved && saved.provider === "aurora" ? "aurora" : "image");
+      }, [saved]);
 
       const [readability, setReadability] = react.useState(() => normalizeReadability(saved && saved.readability));
       react.useEffect(function () {
         if (saved) setReadability(normalizeReadability(saved.readability));
       }, [saved]);
       const saveTimer = react.useRef(null);
+
+      const [aurora, setAurora] = react.useState(() => normalizeAurora(saved && saved.params));
+      react.useEffect(function () {
+        if (saved && saved.provider === "aurora") setAurora(normalizeAurora(saved.params));
+      }, [saved]);
+      const auroraTimer = react.useRef(null);
 
       function changeReadability(key, value) {
         const next = { ...readability, [key]: value };
@@ -347,6 +650,43 @@ window.__ModuleLoader__.load({
         saveTimer.current = setTimeout(function () {
           saveReadability(next).catch(function () {});
         }, 300);
+      }
+
+      function selectMode(m) {
+        setMode(m);
+        if (m === "aurora") {
+          const p = normalizeAurora(aurora);
+          applyAuroraLive(p);
+          saveAurora(p).catch(function () {});
+        }
+      }
+
+      function changeAurora(key, value) {
+        const next = { ...aurora, [key]: value };
+        setAurora(next);
+        applyAuroraLive(next);
+        if (auroraTimer.current) clearTimeout(auroraTimer.current);
+        auroraTimer.current = setTimeout(function () {
+          saveAurora(normalizeAurora(next)).catch(function () {});
+        }, 300);
+      }
+
+      function paletteButtons() {
+        return Object.keys(AURORA_PALETTES).map(function (id) {
+          const pal = AURORA_PALETTES[id];
+          return react.createElement("button", {
+            key: id,
+            type: "button",
+            className: "dsbg_paletteBtn",
+            "data-active": aurora.palette === id,
+            onClick: function () { changeAurora("palette", id); },
+          },
+            react.createElement("span", { className: "dsbg_swatches" },
+              pal.colors.map(function (c) { return react.createElement("span", { key: c, className: "dsbg_swatch", style: { background: c } }); })
+            ),
+            pal.label
+          );
+        });
       }
 
       function handlePick(event) {
@@ -395,7 +735,7 @@ window.__ModuleLoader__.load({
         },
           react.createElement("span", { className: "dsbg_headText" },
             react.createElement("span", { className: "dsbg_name" }, "自定义背景"),
-            react.createElement("span", { className: "dsbg_description" }, "设置全屏背景图，保存后立即生效并跨重启保留。")
+            react.createElement("span", { className: "dsbg_description" }, "设置全屏背景图或动态极光，立即生效并跨重启保留。")
           ),
           dirty ? react.createElement("span", { className: "dsbg_pending" }, "未保存") : null,
           react.createElement(Chevron, { open: open })
@@ -403,9 +743,18 @@ window.__ModuleLoader__.load({
         open ? react.createElement("div", { className: "dsbg_body" },
           react.createElement("div", { className: "dsbg_field" },
             react.createElement("div", { className: "dsbg_fieldHead" },
+              react.createElement("label", { className: "dsbg_label" }, "背景类型")
+            ),
+            react.createElement("div", { className: "dsbg_seg" },
+              react.createElement("button", { type: "button", className: "dsbg_segBtn", "data-active": mode === "image", onClick: function () { selectMode("image"); } }, "图片"),
+              react.createElement("button", { type: "button", className: "dsbg_segBtn", "data-active": mode === "aurora", onClick: function () { selectMode("aurora"); } }, "动态极光")
+            )
+          ),
+          mode === "image" ? react.createElement("div", { className: "dsbg_field" },
+            react.createElement("div", { className: "dsbg_fieldHead" },
               react.createElement("label", { className: "dsbg_label" }, "背景图")
             ),
-            hasCurrent ? react.createElement("div", null,
+            isImage ? react.createElement("div", null,
               react.createElement("img", { className: "dsbg_preview", src: saved.url, alt: "当前背景" }),
               react.createElement("p", { className: "dsbg_current" }, "当前：" + saved.file)
             ) : null,
@@ -421,7 +770,17 @@ window.__ModuleLoader__.load({
               "浏览文件…"
             ),
             react.createElement("p", { className: "dsbg_hint" }, "支持 PNG / JPG / WebP / GIF。图片保存在插件目录（D 盘），不占系统盘，重启后自动还原。")
-          ),
+          ) : null,
+          mode === "aurora" ? react.createElement("div", { className: "dsbg_field" },
+            react.createElement("div", { className: "dsbg_fieldHead" },
+              react.createElement("label", { className: "dsbg_label" }, "极光参数")
+            ),
+            react.createElement("div", { className: "dsbg_palette" }, paletteButtons()),
+            react.createElement(SliderRow, { label: "流速", valueText: String(aurora.speed), min: 1, max: 30, step: 1, value: aurora.speed, onChange: function (v) { changeAurora("speed", v); } }),
+            react.createElement(SliderRow, { label: "扭曲", valueText: String(aurora.distortion), min: 0, max: 40, step: 1, value: aurora.distortion, onChange: function (v) { changeAurora("distortion", v); } }),
+            react.createElement(SliderRow, { label: "漩涡", valueText: String(aurora.swirl), min: 0, max: 24, step: 1, value: aurora.swirl, onChange: function (v) { changeAurora("swirl", v); } }),
+            react.createElement("p", { className: "dsbg_hint" }, "程序实时生成的流动极光；切换配色/拖动滑杆立即生效并自动保存。")
+          ) : null,
           hasCurrent ? react.createElement("div", { className: "dsbg_field" },
             react.createElement("div", { className: "dsbg_fieldHead" },
               react.createElement("label", { className: "dsbg_label" }, "可读性（磨砂）")

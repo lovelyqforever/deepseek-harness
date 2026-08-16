@@ -58,10 +58,13 @@ function clampNum(v, min, max, def) {
 function state() {
   const cfg = readConfig();
   const out = {};
-  if (cfg.provider && cfg.file) {
+  if (cfg.provider === "image" && cfg.file) {
     out.provider = cfg.provider;
     out.file = cfg.file;
     out.url = "/plugins/background/file?v=" + encodeURIComponent(cfg.file);
+  } else if (cfg.provider === "aurora") {
+    out.provider = "aurora";
+    out.params = cfg.params || {};
   }
   out.readability = cfg.readability || {};
   return out;
@@ -201,7 +204,8 @@ export function apply(ctx, config) {
         } catch {}
         const old = readConfig();
         const next = {
-          ...(old.provider && old.file ? { provider: old.provider, file: old.file } : {}),
+          ...(old.provider === "image" && old.file ? { provider: "image", file: old.file } : {}),
+          ...(old.provider === "aurora" ? { provider: "aurora", params: old.params } : {}),
           readability: {
             scrim: clampNum(body.scrim, 0, 0.85, 0.38),
             frostAlpha: clampNum(body.frostAlpha, 0.05, 1, 0.6),
@@ -211,6 +215,44 @@ export function apply(ctx, config) {
         };
         writeConfig(next);
         json(res, 200, { ok: true, readability: next.readability });
+      });
+    },
+  });
+
+  // 6) 保存动态极光参数（程序生成，无文件）
+  ctx.webServer.register({
+    kind: "exact",
+    path: "/plugins/background/aurora",
+    handler: (req, res) => {
+      if (req.method !== "POST") {
+        json(res, 405, { ok: false });
+        return;
+      }
+      let raw = "";
+      req.on("data", (chunk) => {
+        raw += chunk;
+      });
+      req.on("end", () => {
+        let body = {};
+        try {
+          body = JSON.parse(raw) || {};
+        } catch {}
+        const p = body.params || {};
+        const old = readConfig();
+        const params = {
+          speed: clampNum(p.speed, 1, 30, 14),
+          distortion: clampNum(p.distortion, 0, 40, 20),
+          swirl: clampNum(p.swirl, 0, 24, 12),
+          palette: typeof p.palette === "string" ? p.palette : "blue",
+        };
+        // 切到极光时清掉旧图片文件
+        if (old.file) {
+          try {
+            unlinkSync(join(ASSET_DIR, old.file));
+          } catch {}
+        }
+        writeConfig({ provider: "aurora", params: params, readability: old.readability });
+        json(res, 200, { ok: true, ...state() });
       });
     },
   });
