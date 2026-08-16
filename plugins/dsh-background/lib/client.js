@@ -38,6 +38,11 @@ window.__ModuleLoader__.load({
       ".dsbg_current{color:var(--dsw-alias-label-tertiary);margin:4px 0 0;font-size:12px;line-height:1.5;word-break:break-all}",
       ".dsbg_browse{display:inline-flex;align-items:center;justify-content:center;gap:6px;cursor:pointer;border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-3);color:var(--dsw-alias-label-primary);border-radius:8px;padding:6px 14px;font-size:13px;line-height:1.5}",
       ".dsbg_browse:hover{border-color:var(--dsw-alias-label-dimmed)}",
+      ".dsbg_sliderRow{flex-direction:column;gap:4px;padding:6px 0;display:flex}",
+      ".dsbg_sliderHead{justify-content:space-between;align-items:center;gap:8px;display:flex}",
+      ".dsbg_sliderLabel{color:var(--dsw-alias-label-secondary);font-size:12px;line-height:1.5}",
+      ".dsbg_sliderValue{color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:1.5;font-variant-numeric:tabular-nums}",
+      ".dsbg_sliderRow input[type=range]{width:100%;margin:0;accent-color:var(--dsw-alias-brand-primary)}",
     ].join("");
 
     const tagId = "dsh-background/styles";
@@ -49,13 +54,18 @@ window.__ModuleLoader__.load({
       document.head.appendChild(tag);
     }
 
-    // 有背景时注入的透明化（让所有不透明面板透出底层背景图）。做成可开关，清除背景时移除。
-    // 取长补短：套一层 body[data-dsh-background] 作用域（学官方皮肤的隔离做法）——
-    // 只有背景激活时才生效，不污染其它皮肤/插件；同时仍保留「一刀切全部背景透明」的覆盖力，
-    // 只动「背景颜色」这一个属性，不碰文字颜色，所以文字不会消失。
-    // 文字可读性（自适应压暗层）是独立后续步骤，本规则不处理。
-    const TRANSPARENCY_CSS =
-      "body[data-dsh-background] *{background-color:transparent!important}";
+    // 有背景时注入的可读性样式（作用域 body[data-dsh-background]，清除背景时移除）：
+    // 1) 压暗层：背景层 ::after 叠半透明黑，把壁纸整体压暗，让文字跳出；
+    // 2) 磨砂玻璃：只给主要浮层面板（侧栏/弹窗/气泡/输入框/工具栏等）加半透明底色 +
+    //    backdrop-filter 模糊，恢复面板边界；底色用 --dsbg-frost（按明暗主题区分）；
+    // 3) 一刀切透明：其余小元素（按钮/开关/进度条）保持背景透明，透出磨砂面板。
+    const READABILITY_CSS = [
+      "#dsh-background-layer::after{content:'';position:absolute;inset:0;background:rgba(0,0,0,var(--dsbg-scrim,.38));pointer-events:none}",
+      "body[data-dsh-background]{--dsbg-frost:rgba(252,252,253,var(--dsbg-frost-alpha,.6))}",
+      "body[data-dsh-background][data-ds-dark-theme]{--dsbg-frost:rgba(28,28,30,var(--dsbg-frost-alpha,.6))}",
+      "body[data-dsh-background] *{background-color:transparent!important}",
+      "body[data-dsh-background] :is([class*='_rail_'],[class*='_dialog_'],[class*='_backdrop_'],[class*='_list_'],[class*='_bubble_'],[class*='_prompt_'],[class*='_promptLine_'],[class*='_toolbar_'],[class*='_header_'],[class*='_footer_'],[class*='_pill_'],[class*='_sideTop_'],[class*='_content_']){background-color:var(--dsbg-frost)!important;-webkit-backdrop-filter:blur(var(--dsbg-blur,16px)) saturate(1.4);backdrop-filter:blur(var(--dsbg-blur,16px)) saturate(1.4)}",
+    ].join("");
 
     function setTransparency(on) {
       const id = "dsh-background-transparency";
@@ -67,13 +77,37 @@ window.__ModuleLoader__.load({
         if (!tag) {
           tag = document.createElement("style");
           tag.id = id;
-          tag.textContent = TRANSPARENCY_CSS;
+          tag.textContent = READABILITY_CSS;
           document.head.appendChild(tag);
         }
       } else {
         document.body.removeAttribute("data-dsh-background");
         if (tag) tag.remove();
       }
+    }
+
+    // 可读性参数：把滑杆值写入 CSS 变量（--dsbg-scrim / --dsbg-frost-alpha / --dsbg-blur），
+    // READABILITY_CSS 引用这些变量。范围钳制 + 默认值兜底，写不到 documentElement 时静默跳过。
+    function clampNum(v, min, max, def) {
+      const n = typeof v === "number" && isFinite(v) ? v : def;
+      return Math.min(max, Math.max(min, n));
+    }
+    function normalizeReadability(r) {
+      return {
+        scrim: clampNum(r && r.scrim, 0, 0.85, 0.38),
+        frostAlpha: clampNum(r && r.frostAlpha, 0.05, 1, 0.6),
+        blur: clampNum(r && r.blur, 0, 40, 16),
+      };
+    }
+    function applyReadability(r) {
+      const n = normalizeReadability(r);
+      const root = document.documentElement;
+      if (root && root.style) {
+        root.style.setProperty("--dsbg-scrim", String(n.scrim));
+        root.style.setProperty("--dsbg-frost-alpha", String(n.frostAlpha));
+        root.style.setProperty("--dsbg-blur", n.blur + "px");
+      }
+      return n;
     }
 
     // =====================================================================
@@ -119,6 +153,7 @@ window.__ModuleLoader__.load({
       const layer = ensureLayer();
       const provider = providers[s && s.provider];
       if (provider) provider.apply(layer, s);
+      applyReadability(s && s.readability);
       setTransparency(true);
     }
 
@@ -167,7 +202,7 @@ window.__ModuleLoader__.load({
       if (!res.ok) throw new Error("save failed: " + res.status);
       const data = await res.json();
       if (!data.ok) throw new Error(data.error || "save failed");
-      setState({ provider: data.provider, file: data.file, url: data.url });
+      setState({ provider: data.provider, file: data.file, url: data.url, readability: data.readability });
       applyDom(data);
       return data;
     }
@@ -177,6 +212,17 @@ window.__ModuleLoader__.load({
       await res.json();
       setState(null);
       clearDom();
+    }
+    async function saveReadability(settings) {
+      const res = await fetch("/plugins/background/readability", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(settings),
+      });
+      if (!res.ok) throw new Error("readability save failed: " + res.status);
+      const data = await res.json();
+      if (state) setState({ ...state, readability: data.readability });
+      return data.readability;
     }
     function useBackground() {
       const [v, setV] = react.useState(state);
@@ -199,6 +245,23 @@ window.__ModuleLoader__.load({
       );
     }
 
+    function SliderRow(props) {
+      return react.createElement("div", { className: "dsbg_sliderRow" },
+        react.createElement("div", { className: "dsbg_sliderHead" },
+          react.createElement("span", { className: "dsbg_sliderLabel" }, props.label),
+          react.createElement("span", { className: "dsbg_sliderValue" }, props.valueText)
+        ),
+        react.createElement("input", {
+          type: "range",
+          min: props.min,
+          max: props.max,
+          step: props.step,
+          value: props.value,
+          onChange: function (e) { props.onChange(parseFloat(e.target.value)); },
+        })
+      );
+    }
+
     function BackgroundCard() {
       const saved = useBackground();
       const [open, setOpen] = react.useState(false);
@@ -208,6 +271,22 @@ window.__ModuleLoader__.load({
 
       const hasCurrent = !!saved;
       const dirty = !!pending;
+
+      const [readability, setReadability] = react.useState(() => normalizeReadability(saved && saved.readability));
+      react.useEffect(function () {
+        if (saved) setReadability(normalizeReadability(saved.readability));
+      }, [saved]);
+      const saveTimer = react.useRef(null);
+
+      function changeReadability(key, value) {
+        const next = { ...readability, [key]: value };
+        setReadability(next);
+        applyReadability(next);
+        if (saveTimer.current) clearTimeout(saveTimer.current);
+        saveTimer.current = setTimeout(function () {
+          saveReadability(next).catch(function () {});
+        }, 300);
+      }
 
       function handlePick(event) {
         const file = event.target.files && event.target.files[0];
@@ -282,6 +361,15 @@ window.__ModuleLoader__.load({
             ),
             react.createElement("p", { className: "dsbg_hint" }, "支持 PNG / JPG / WebP / GIF。图片保存在插件目录（D 盘），不占系统盘，重启后自动还原。")
           ),
+          hasCurrent ? react.createElement("div", { className: "dsbg_field" },
+            react.createElement("div", { className: "dsbg_fieldHead" },
+              react.createElement("label", { className: "dsbg_label" }, "可读性（磨砂）")
+            ),
+            react.createElement(SliderRow, { label: "压暗深度", valueText: Math.round(readability.scrim * 100) + "%", min: 0, max: 0.85, step: 0.01, value: readability.scrim, onChange: function (v) { changeReadability("scrim", v); } }),
+            react.createElement(SliderRow, { label: "磨砂不透明度", valueText: Math.round(readability.frostAlpha * 100) + "%", min: 0.05, max: 1, step: 0.01, value: readability.frostAlpha, onChange: function (v) { changeReadability("frostAlpha", v); } }),
+            react.createElement(SliderRow, { label: "模糊强度", valueText: Math.round(readability.blur) + "px", min: 0, max: 40, step: 1, value: readability.blur, onChange: function (v) { changeReadability("blur", v); } }),
+            react.createElement("p", { className: "dsbg_hint" }, "拖动立即生效并自动保存；数值越大，文字越清楚、面板越实。")
+          ) : null,
           react.createElement("div", { className: "dsbg_footer" },
             failed ? react.createElement("p", { className: "dsbg_failed", role: "status" }, "操作失败") : null,
             hasCurrent ? react.createElement("button", { type: "button", className: "dsbg_discard", disabled: saving, onClick: doClear }, "恢复默认") : null,

@@ -49,15 +49,22 @@ function writeConfig(cfg) {
   writeFileSync(CONFIG_FILE, JSON.stringify(cfg, null, 2), "utf8");
 }
 
+function clampNum(v, min, max, def) {
+  const n = typeof v === "number" && Number.isFinite(v) ? v : def;
+  return Math.min(max, Math.max(min, n));
+}
+
 // 当前背景状态；url 带 ?v=<filename> 作为 cache-bust（每次保存生成唯一文件名，前端换图必刷新）
 function state() {
   const cfg = readConfig();
-  if (!cfg.provider || !cfg.file) return {};
-  return {
-    provider: cfg.provider,
-    file: cfg.file,
-    url: "/plugins/background/file?v=" + encodeURIComponent(cfg.file),
-  };
+  const out = {};
+  if (cfg.provider && cfg.file) {
+    out.provider = cfg.provider;
+    out.file = cfg.file;
+    out.url = "/plugins/background/file?v=" + encodeURIComponent(cfg.file);
+  }
+  out.readability = cfg.readability || {};
+  return out;
 }
 
 function json(res, code, obj) {
@@ -121,7 +128,7 @@ export function apply(ctx, config) {
               unlinkSync(join(ASSET_DIR, old.file));
             } catch {}
           }
-          writeConfig({ provider: "image", file: filename });
+          writeConfig({ provider: "image", file: filename, readability: old.readability });
           console.log("[dsh-background] saved", filename, "->", ASSET_DIR);
           json(res, 200, { ok: true, ...state() });
         } catch (error) {
@@ -147,7 +154,7 @@ export function apply(ctx, config) {
             unlinkSync(join(ASSET_DIR, old.file));
           } catch {}
         }
-        writeConfig({});
+        writeConfig({ readability: old.readability });
         json(res, 200, { ok: true });
       } catch (error) {
         json(res, 500, { ok: false, error: String(error?.message ?? error) });
@@ -171,6 +178,39 @@ export function apply(ctx, config) {
       const mime = EXT_MIME[ext] || "application/octet-stream";
       res.writeHead(200, { "Content-Type": mime, "Cache-Control": "no-store" });
       res.end(readFileSync(file));
+    },
+  });
+
+  // 5) 保存可读性参数（压暗/磨砂/模糊），与背景图独立存储
+  ctx.webServer.register({
+    kind: "exact",
+    path: "/plugins/background/readability",
+    handler: (req, res) => {
+      if (req.method !== "POST") {
+        json(res, 405, { ok: false });
+        return;
+      }
+      let raw = "";
+      req.on("data", (chunk) => {
+        raw += chunk;
+      });
+      req.on("end", () => {
+        let body = {};
+        try {
+          body = JSON.parse(raw) || {};
+        } catch {}
+        const old = readConfig();
+        const next = {
+          ...(old.provider && old.file ? { provider: old.provider, file: old.file } : {}),
+          readability: {
+            scrim: clampNum(body.scrim, 0, 0.85, 0.38),
+            frostAlpha: clampNum(body.frostAlpha, 0.05, 1, 0.6),
+            blur: clampNum(body.blur, 0, 40, 16),
+          },
+        };
+        writeConfig(next);
+        json(res, 200, { ok: true, readability: next.readability });
+      });
     },
   });
 
