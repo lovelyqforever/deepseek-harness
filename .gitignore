@@ -9,6 +9,7 @@ app/
 
 # 研究/参考（社区仓库等，非本仓库源码）
 _research/
+reference/
 
 # 密钥（绝不入库）
 .credentials.yaml
