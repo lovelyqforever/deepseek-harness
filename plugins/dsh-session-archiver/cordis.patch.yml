@@ -1,0 +1,6 @@
+# dsh-session-archiver 的 bundle patch：把本插件作为一行插入宿主组合。
+# name 必须等于 package.json 的 name（宿主 loader 和 client-modules 注册表都靠它解析）。
+- insert:
+    - id: dsh-session-archiver
+      name: dsh-session-archiver
+      config: {}

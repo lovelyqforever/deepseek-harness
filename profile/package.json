@@ -11,7 +11,8 @@
         "dsh-update-check",
         "dsh-titlebar",
         "dsh-background",
-        "dsh-plugin-manager"
+        "dsh-plugin-manager",
+        "dsh-session-archiver"
       ]
     }
   },
@@ -21,6 +22,7 @@
     "dsh-update-check": "link:../plugins/dsh-update-check",
     "dsh-titlebar": "link:../plugins/dsh-titlebar",
     "dsh-background": "link:../plugins/dsh-background",
-    "dsh-plugin-manager": "link:../plugins/dsh-plugin-manager"
+    "dsh-plugin-manager": "link:../plugins/dsh-plugin-manager",
+    "dsh-session-archiver": "link:../plugins/dsh-session-archiver"
   }
 }

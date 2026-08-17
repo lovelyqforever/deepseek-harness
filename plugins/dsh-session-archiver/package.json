@@ -1,0 +1,26 @@
+{
+  "name": "dsh-session-archiver",
+  "version": "1.0.0",
+  "description": "在「设置 → Agent 预设」下方新增「归档对话」节：查看已归档会话并一键取消归档，重新放回工作区侧边栏。",
+  "type": "module",
+  "main": "lib/index.js",
+  "license": "MIT",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-slots",
+        "@deepseek-ai/dsh-client-ui-settings-general",
+        "@deepseek-ai/dsh-client-locale"
+      ],
+      "platform": "web"
+    }
+  },
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json"
+  }
+}
