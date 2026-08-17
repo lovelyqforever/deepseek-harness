@@ -88,14 +88,13 @@ Pop-Location
 
 # ② 装 DSH 引擎 + pnpm（全局，一次性）
 npm i -g @deepseek-ai/dsh
-npm i -g pnpm
 
 # ③ 拉仓库
 git clone https://github.com/lovelyqforever/deepseek-harness.git
 cd deepseek-harness
 
 # ④ 装插件（生成 C 盘 profile + 软链）
-.\setup.ps1
+.\setup.ps1 会自动执行 npm i -g pnpm
 
 # ⑤ 从源码打包 exe
 cd src
