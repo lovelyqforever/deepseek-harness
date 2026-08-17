@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { cp, mkdir, readdir, stat, rm } from "node:fs/promises";
 import { spawn } from "node:child_process";
 import path from "node:path";
 
@@ -56,6 +57,43 @@ export function apply(ctx, config) {
     return null;
   }
 
+  // 全局安装目录（升级 / 备份的目标）
+  function installDir() {
+    if (process.env.APPDATA) {
+      return path.join(process.env.APPDATA, "npm", "node_modules", "@deepseek-ai", "dsh");
+    }
+    return null;
+  }
+
+  // 更新前备份当前全局安装到 ~/.dsh/backups/dsh-<版本>-<时间戳>，只保留最近 2 份
+  async function backupInstall() {
+    const src = installDir();
+    if (!src) return null;
+    try { if (!(await stat(src)).isDirectory()) return null; } catch { return null; }
+    const home = process.env.DSH_HOME ||
+      (process.env.USERPROFILE ? path.join(process.env.USERPROFILE, ".dsh") : null);
+    if (!home) return null;
+    const backupsDir = path.join(home, "backups");
+    let version = "unknown";
+    try { version = JSON.parse(readFileSync(path.join(src, "package.json"), "utf8"))?.version || "unknown"; } catch {}
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const dest = path.join(backupsDir, `dsh-${version}-${stamp}`);
+    await mkdir(backupsDir, { recursive: true });
+    await cp(src, dest, { recursive: true, force: true });
+    // 只保留最近 2 份
+    const entries = await readdir(backupsDir, { withFileTypes: true });
+    const backups = [];
+    for (const e of entries) {
+      if (!e.isDirectory() || !e.name.startsWith("dsh-")) continue;
+      try { backups.push({ name: e.name, mtime: (await stat(path.join(backupsDir, e.name))).mtimeMs }); } catch {}
+    }
+    backups.sort((a, b) => b.mtime - a.mtime);
+    for (const item of backups.slice(2)) {
+      try { await rm(path.join(backupsDir, item.name), { recursive: true, force: true }); } catch {}
+    }
+    return dest;
+  }
+
   async function check() {
     if (debug) {
       status.installed = installedVersion() || "0.1.0-rc.6";
@@ -82,7 +120,7 @@ export function apply(ctx, config) {
     status.hasUpdate = !!(status.installed && status.latest && status.installed !== status.latest);
   }
 
-  function runUpdate() {
+  async function runUpdate() {
     if (status.updateState === "updating") return;
     status.updateState = "updating";
     status.updateLog = "";
@@ -98,6 +136,13 @@ export function apply(ctx, config) {
       status.updateLog += s;
       if (status.updateLog.length > 20000) status.updateLog = status.updateLog.slice(-20000);
     };
+    // 更新前先备份当前全局安装；升级崩了可用仓库里的 restore.ps1 回滚
+    try {
+      const bak = await backupInstall();
+      append(bak ? `[backup] 已备份当前安装：${bak}\n` : "[backup] 未找到全局安装，跳过备份\n");
+    } catch (e) {
+      append(`[backup] 备份失败：${e?.message ?? e}\n`);
+    }
     let child;
     try {
       child = spawn(updateCommand, { shell: true, windowsHide: true });
@@ -147,7 +192,10 @@ export function apply(ctx, config) {
         res.end();
         return;
       }
-      runUpdate();
+      runUpdate().catch((e) => {
+        status.updateState = "error";
+        status.updateLog = String(e?.message ?? e);
+      });
       res.writeHead(200, {
         "Content-Type": "application/json; charset=utf-8",
         "Cache-Control": "no-store",
