@@ -157,8 +157,8 @@ window.__ModuleLoader__.load({
           ? react.createElement("ul", { className: "dsa_list" },
               sessions.map((s) => react.createElement("li", { className: "dsa_row", key: s.id },
                 react.createElement("div", { className: "dsa_meta" },
-                  react.createElement("span", { className: "dsa_name", title: s.id }, s.title),
-                  react.createElement("span", { className: "dsa_when" }, formatTime(s.updatedAt)),
+                  react.createElement("span", { className: "dsa_name", title: s.title }, s.title),
+                  react.createElement("span", { className: "dsa_when" }, formatTime(s.createdAt)),
                   s.cwd ? react.createElement("span", { className: "dsa_cwd" }, basename(s.cwd)) : null
                 ),
                 react.createElement("button", {
