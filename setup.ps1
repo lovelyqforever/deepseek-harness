@@ -1,24 +1,25 @@
-﻿<#
-  setup.ps1 — 双机开发环境一键搭建
+<#
+  setup.ps1 - one-command dev environment setup for this machine
   --------------------------------------------------
-  前置（手动，一次）：
-    1) 装好 Node.js
+  Prerequisites (manual, one-time):
+    1) Install Node.js
     2) npm i -g @deepseek-ai/dsh
-    3) git clone 本仓库
+    3) git clone this repo
 
-  原理：DSH 只认 ~/.dsh/profiles/<name> 这个固定位置（--profile web）。
-  本脚本把仓库里 profile/（可移植模板，用相对 link:）落地到那个位置，
-  并把 link: 的相对路径替换成本机仓库的真实绝对路径（绝对软链才能被
-  DSH 稳定解析——相对软链穿过 junction/别处访问会解析错）。
+  How it works: DSH only reads the fixed location ~/.dsh/profiles/<name> (--profile web).
+  This script materializes the repo's profile/ (portable template, relative link:) into
+  that location, and rewrites the relative link: to this machine's real absolute repo path
+  (absolute symlinks resolve reliably in DSH; relative symlinks break when accessed
+  through a junction or from another location).
 
-  脚本自动做：
-    1) 确保 pnpm 可用（没有就 npm i -g pnpm）
-    2) 生成 ~/.dsh/profiles/web（真实目录），link: 换成绝对路径
-    3) pnpm install，把 plugins/ 下的插件软链进 node_modules
-    4) 生成 .credentials.yaml 模板（key 留空，你亲手填）
-    5) 自检：确认每个插件软链都就位
+  The script does:
+    1) Ensure pnpm is available (npm i -g pnpm if missing)
+    2) Generate ~/.dsh/profiles/web (real directory), rewrite link: to absolute paths
+    3) pnpm install, symlink plugins under plugins/ into node_modules
+    4) Generate a .credentials.yaml template (keys left empty for you to fill in)
+    5) Self-check: verify every plugin symlink is in place
 
-  用法（PowerShell / pwsh）： .\setup.ps1
+  Usage (PowerShell / pwsh): .\setup.ps1
 #>
 
 $ErrorActionPreference = 'Stop'
@@ -28,9 +29,10 @@ function Write-Ok($m)   { Write-Host "    [ok] $m" -ForegroundColor Green }
 function Write-Warn($m) { Write-Host "    [!]  $m" -ForegroundColor Yellow }
 function Write-Fail($m) { Write-Host "    [X]  $m" -ForegroundColor Red }
 
-# 无 BOM 守卫（双保险第二层）：读回文件，若发现 UTF-8 BOM（EF BB BF）则当场剥离并告警。
-# 即使将来有人又把写入路径改回会带 BOM 的写法，这一层也会在同一次 setup 里兜底，
-# 保证 dsh 的 readProfileManifest（直接 JSON.parse、不剥 BOM）永不踩雷。
+# BOM guard (second layer of defense): read the file back; if a UTF-8 BOM (EF BB BF)
+# is found, strip it immediately and warn. Even if someone later reverts the write path
+# back to a BOM-emitting form, this layer catches it in the same setup run, so dsh's
+# readProfileManifest (plain JSON.parse, no BOM stripping) never trips.
 function Assert-Utf8NoBom {
   param([string]$Path)
   if (-not (Test-Path $Path)) { return }
@@ -39,150 +41,151 @@ function Assert-Utf8NoBom {
     $clean = New-Object byte[] ($bytes.Length - 3)
     [Array]::Copy($bytes, 3, $clean, 0, $clean.Length)
     [System.IO.File]::WriteAllBytes($Path, $clean)
-    Write-Warn "已自动剥离 UTF-8 BOM：$Path"
+    Write-Warn "Stripped UTF-8 BOM: $Path"
   }
 }
 
-# ---------- 1) 定位仓库根（= 脚本所在目录） ----------
+# ---------- 1) Locate repo root (= script directory) ----------
 $RepoRoot   = $PSScriptRoot
 $ProfileSrc = Join-Path $RepoRoot 'profile'
 
 if (-not (Test-Path (Join-Path $ProfileSrc 'package.json'))) {
-    Write-Fail "找不到 $ProfileSrc\package.json —— 请确认 setup.ps1 放在仓库根目录。"
+    Write-Fail "Cannot find $ProfileSrc\package.json - make sure setup.ps1 is at the repo root."
     exit 1
 }
 
-# DSH home 与 profile 目标位置（和 DSH 源码 resolveDshHome 一致）
+# DSH home and profile target (matches DSH source resolveDshHome)
 $DshHome     = if ($env:DSH_HOME) { $env:DSH_HOME } else { Join-Path $env:USERPROFILE '.dsh' }
 $ProfilesDir = Join-Path $DshHome 'profiles'
 $ProfileLink = Join-Path $ProfilesDir 'web'
 
-# ---------- 前置检查 ----------
-Write-Step "前置检查：node / npm / dsh"
-if (-not (Get-Command node -ErrorAction SilentlyContinue)) { Write-Fail '未找到 node，请先安装 Node.js'; exit 1 }
-Write-Ok 'node 已就绪'
-if (-not (Get-Command npm -ErrorAction SilentlyContinue))  { Write-Fail '未找到 npm'; exit 1 }
-Write-Ok 'npm 已就绪'
-if (-not (Get-Command dsh -ErrorAction SilentlyContinue))  { Write-Warn '未找到 dsh（npm i -g @deepseek-ai/dsh 装了吗？）；继续，但最后自检只查软链。' }
-else { Write-Ok 'dsh 已就绪' }
+# ---------- Preflight ----------
+Write-Step "Preflight: node / npm / dsh"
+if (-not (Get-Command node -ErrorAction SilentlyContinue)) { Write-Fail 'node not found - install Node.js first'; exit 1 }
+Write-Ok 'node ok'
+if (-not (Get-Command npm -ErrorAction SilentlyContinue))  { Write-Fail 'npm not found'; exit 1 }
+Write-Ok 'npm ok'
+if (-not (Get-Command dsh -ErrorAction SilentlyContinue))  { Write-Warn 'dsh not found (did you run npm i -g @deepseek-ai/dsh?); continuing, but the final self-check only verifies symlinks.' }
+else { Write-Ok 'dsh ok' }
 
-# ---------- 2) 确保 pnpm ----------
-Write-Step "确保 pnpm 可用"
+# ---------- 2) Ensure pnpm ----------
+Write-Step "Ensure pnpm is available"
 if (-not (Get-Command pnpm -ErrorAction SilentlyContinue)) {
-    Write-Warn '未找到 pnpm，执行 npm i -g pnpm ...'
+    Write-Warn 'pnpm not found, running npm i -g pnpm ...'
     npm install -g pnpm
-    if ($LASTEXITCODE -ne 0) { Write-Fail 'pnpm 安装失败'; exit 1 }
+    if ($LASTEXITCODE -ne 0) { Write-Fail 'pnpm install failed'; exit 1 }
 }
-Write-Ok 'pnpm 已就绪'
+Write-Ok 'pnpm ok'
 
-# ---------- 2.5) 建立插件依赖桥（junction） ----------
-# plugins/ 下的插件若 import @deepseek-ai/*（schemastery / dsh-settings 等），
-# 因为插件在本仓库（D 盘），Node 无法向上解析到 C 盘全局 dsh 的 node_modules，
-# 需建一个 junction 把 plugins/node_modules 指过去（DSH 官方文档机制）。
-Write-Step "建立插件依赖桥 (junction)"
+# ---------- 2.5) Build plugin dependency bridge (junction) ----------
+# Plugins under plugins/ that import @deepseek-ai/* (schemastery / dsh-settings etc.)
+# live in this repo (e.g. D:), so Node cannot resolve up to the global dsh node_modules
+# on C:. A junction pointing plugins/node_modules there is required (documented DSH mechanism).
+Write-Step "Build plugin dependency bridge (junction)"
 $pluginsNodeModules = Join-Path $RepoRoot 'plugins\node_modules'
 $alreadyJunction = $false
 if (Test-Path $pluginsNodeModules) {
     $alreadyJunction = ((Get-Item $pluginsNodeModules -Force).Attributes -match 'ReparsePoint')
     if (-not $alreadyJunction) {
-        Write-Warn 'plugins\node_modules 存在但不是 junction（普通目录），删除后重建'
+        Write-Warn 'plugins\node_modules exists but is not a junction (regular dir); removing and recreating'
         Remove-Item $pluginsNodeModules -Recurse -Force
     }
 }
 if ($alreadyJunction) {
-    Write-Ok 'plugins\node_modules 已是 junction，跳过'
+    Write-Ok 'plugins\node_modules is already a junction, skipping'
 } else {
     $dshGlobalRoot = (npm root -g 2>$null | Out-String).Trim()
     $dshGlobalNodeModules = Join-Path (Join-Path (Join-Path $dshGlobalRoot '@deepseek-ai') 'dsh') 'node_modules'
     if ($dshGlobalRoot -and (Test-Path $dshGlobalNodeModules)) {
         New-Item -ItemType Junction -Path $pluginsNodeModules -Target $dshGlobalNodeModules | Out-Null
-        Write-Ok "已建 junction: plugins\node_modules -> $dshGlobalNodeModules"
+        Write-Ok "Created junction: plugins\node_modules -> $dshGlobalNodeModules"
     } else {
-        Write-Warn "未找到全局 dsh 的 node_modules（$dshGlobalNodeModules），跳过；插件若 import @deepseek-ai/* 会加载失败"
+        Write-Warn "Global dsh node_modules not found ($dshGlobalNodeModules); skipping. Plugins importing @deepseek-ai/* will fail to load."
     }
 }
 
-# ---------- 3) 落地 profile（真实目录 + 绝对 link） ----------
-Write-Step "生成 $ProfileLink"
+# ---------- 3) Materialize profile (real dir + absolute link) ----------
+Write-Step "Generating $ProfileLink"
 if (-not (Test-Path $ProfilesDir)) { New-Item -ItemType Directory -Path $ProfilesDir -Force | Out-Null }
 
-# 落地前先清掉更早的 profile 备份（web.bak.*），只保留本次即将生成的最新一份，防止越堆越多
+# Before materializing, remove older profile backups (web.bak.*), keeping only the newest one about to be created.
 $oldBackups = Get-ChildItem $ProfilesDir -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -like 'web.bak.*' }
 foreach ($old in $oldBackups) {
-    Write-Warn "删除旧备份 $($old.Name)"
+    Write-Warn "Removing old backup $($old.Name)"
     Remove-Item $old.FullName -Recurse -Force
 }
 
-# 已存在就备份（不管它是真实目录还是链接）
+# Back up if it already exists (whether real dir or link)
 if (Test-Path $ProfileLink) {
     $backup = "$ProfileLink.bak." + (Get-Date -Format 'yyyyMMdd-HHmmss')
-    Write-Warn "发现已存在的 profile，备份为 $backup"
+    Write-Warn "Existing profile found, backing up to $backup"
     Rename-Item $ProfileLink $backup
 }
 
 New-Item -ItemType Directory -Path $ProfileLink -Force | Out-Null
 
-# 把模板里的相对 link: 换成本机仓库的绝对路径（正斜杠）
+# Rewrite the template's relative link: to this machine's absolute repo path (forward slashes)
 $pluginsDir = (($RepoRoot -replace '\\','/') + '/plugins')
 $pkgText = (Get-Content (Join-Path $ProfileSrc 'package.json') -Raw)
 $pkgText = $pkgText.Replace('link:../plugins', "link:$pluginsDir")
-# 无 BOM 写入：Windows PowerShell 5.1 的 `Set-Content -Encoding utf8` 会在文件头写 EF BB BF，
-# 而 dsh 的 readProfileManifest 是直接 JSON.parse(raw)，不剥 BOM，导致启动崩溃。改用 UTF8Encoding($false)。
+# BOM-free write: Windows PowerShell 5.1's `Set-Content -Encoding utf8` writes EF BB BF,
+# and dsh's readProfileManifest does plain JSON.parse(raw) without stripping BOM, crashing startup.
+# Use UTF8Encoding($false) instead.
 [System.IO.File]::WriteAllText((Join-Path $ProfileLink 'package.json'), $pkgText, (New-Object System.Text.UTF8Encoding($false)))
 Assert-Utf8NoBom (Join-Path $ProfileLink 'package.json')
 
-# 复制 pnpm 配置（pnpm install 需要它）
+# Copy pnpm config (pnpm install needs it)
 Copy-Item (Join-Path $ProfileSrc 'pnpm-workspace.yaml') (Join-Path $ProfileLink 'pnpm-workspace.yaml') -Force
-# 复制用户 patch 层（dsh-plugin-manager 的「启用/禁用」开关写在这里；cordis.yml 仍由 DSH 启动时自动生成）
+# Copy user patch layer (dsh-plugin-manager's enable/disable toggle is written here; cordis.yml is still auto-generated by DSH at startup)
 $patchSrc = Join-Path $ProfileSrc 'cordis.patch.yml'
 if (Test-Path $patchSrc) {
     Copy-Item $patchSrc (Join-Path $ProfileLink 'cordis.patch.yml') -Force
 }
-Write-Ok "profile 已生成，插件绝对路径：$pluginsDir"
+Write-Ok "Profile generated, plugin absolute path: $pluginsDir"
 
 # ---------- 4) pnpm install ----------
-Write-Step "pnpm install（把 plugins/ 下的插件软链进 node_modules）"
+Write-Step "pnpm install (symlink plugins under plugins/ into node_modules)"
 Push-Location $ProfileLink
 try {
     pnpm install
-    if ($LASTEXITCODE -ne 0) { throw "pnpm install 失败（exit $LASTEXITCODE）" }
+    if ($LASTEXITCODE -ne 0) { throw "pnpm install failed (exit $LASTEXITCODE)" }
 } finally {
     Pop-Location
 }
-Write-Ok 'pnpm install 完成'
+Write-Ok 'pnpm install done'
 
-# ---------- 5) 密钥模板 ----------
-Write-Step "密钥模板"
+# ---------- 5) Credentials template ----------
+Write-Step "Credentials template"
 $cred = Join-Path $DshHome '.credentials.yaml'
 if (-not (Test-Path $cred)) {
     $credTemplate = @'
-# 填入本机要用的 API key（每台机器各填各的）
+# Fill in the API keys this machine needs (each machine fills its own)
 DEEPSEEK_API_KEY:
 NEON_API_KEY:
 '@
     [System.IO.File]::WriteAllText($cred, $credTemplate, (New-Object System.Text.UTF8Encoding($false)))
     Assert-Utf8NoBom $cred
-    Write-Warn "已生成 $cred —— 请把 key 填进去"
+    Write-Warn "Generated $cred - fill in your keys"
 } else {
-    Write-Ok '已存在 .credentials.yaml，不覆盖。'
+    Write-Ok '.credentials.yaml already exists, not overwriting.'
 }
 
-# ---------- 6) 自检 ----------
-Write-Step "自检"
-# 动态从 profile 的 dependencies 读插件名（link: 依赖），新增插件无需改这里
+# ---------- 6) Self-check ----------
+Write-Step "Self-check"
+# Read plugin names dynamically from the profile's dependencies (link: deps); new plugins need no change here
 $profilePkg = Get-Content (Join-Path $ProfileLink 'package.json') -Raw | ConvertFrom-Json
 $pluginNames = @($profilePkg.dependencies.PSObject.Properties.Name)
 $allOk = $true
 foreach ($p in $pluginNames) {
     $pkg = Join-Path $ProfileLink "node_modules\$p\package.json"
-    if (Test-Path $pkg) { Write-Ok "$p 软链就绪" }
-    else { Write-Fail "$p 未就绪：$pkg"; $allOk = $false }
+    if (Test-Path $pkg) { Write-Ok "$p symlink ready" }
+    else { Write-Fail "$p not ready: $pkg"; $allOk = $false }
 }
 
 Write-Host ""
 if ($allOk) {
-    Write-Host '全部就绪。下一步：填 key，然后跑 dsh web 验证。' -ForegroundColor Green
+    Write-Host 'All ready. Next: fill in keys, then run dsh web to verify.' -ForegroundColor Green
 } else {
-    Write-Fail '有插件未就绪，请检查上面的失败项。'
+    Write-Fail 'Some plugins are not ready; check the failures above.'
     exit 1
 }
