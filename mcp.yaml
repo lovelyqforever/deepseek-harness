@@ -1,0 +1,25 @@
+# 团队 MCP 默认清单（进 Git）。dsh-mcp 读取此文件，为每个 enabled 的 server
+# 实例化官方 @deepseek-ai/dsh-mcp-client。增删 server 就编辑本文件。
+#
+# 字段说明：
+#   id        本地唯一标识（启停/日志用，唯一即可）
+#   serverName 模型侧命名空间：工具名形如 mcp__<serverName>__<tool>
+#             要求 [A-Za-z0-9_-]{1,32}，且各 server 之间必须唯一
+#   transport stdio（spawn 子进程）| streamable-http（连 URL）
+#   enabled   true 启用 / false 停用（保留在清单里，但不实例化）
+#   stdio 用：command / args / env / cwd
+#   http 用：url / headers
+#
+# env 值约定：以 "$" 开头的字符串会从进程环境变量解析，例如
+#   env: { GITHUB_TOKEN: "$GITHUB_TOKEN" }
+# 普通字符串原样透传。密钥不要硬编码进本文件。
+
+servers:
+  - id: godot
+    serverName: godot
+    transport: stdio
+    command: npx
+    args: ['-y', '@coding-solo/godot-mcp@0.1.1']
+    env:
+      GODOT_PATH: '$GODOT_PATH'
+    enabled: true

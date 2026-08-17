@@ -1,0 +1,25 @@
+{
+  "name": "dsh-mcp",
+  "version": "1.0.0",
+  "description": "MCP 管理插件：读取项目 mcp.yaml，逐 server 实例化官方 @deepseek-ai/dsh-mcp-client，并提供独立的「MCP 管理」设置页。",
+  "type": "module",
+  "main": "lib/index.js",
+  "license": "MIT",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-slots",
+        "@deepseek-ai/dsh-client-locale"
+      ],
+      "platform": "web"
+    }
+  },
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json"
+  }
+}

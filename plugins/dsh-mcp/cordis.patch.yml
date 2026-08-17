@@ -1,0 +1,6 @@
+# dsh-mcp 的 bundle patch：把宿主半插入插件树。
+# 只有一个入口 id（dsh-mcp），所以 dsh-plugin-manager 的「整包开关」能正确命中。
+- insert:
+    - id: dsh-mcp
+      name: 'dsh-mcp'
+      config: {}
