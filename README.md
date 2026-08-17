@@ -45,9 +45,20 @@ DSH 启动时**只读** `~/.dsh/profiles/web/package.json`（C 盘，DSH_HOME �
 
 ## 第三方插件（从网上装的）
 
-网上插件的默认安装命令（`dsh plugin add <pkg>` / `npm i <pkg>`）会装进 **C 盘 profile 的 node_modules**，不进 Git——另一台机器拿不到。要进仓库，**默认用方式 1（vendor 进 plugins/）**；确定不改源码、且插件已发布 npm 时，才用方式 2：
+网上插件的默认安装命令（`dsh plugin add <pkg>` / `npm i <pkg>`）会装进 **C 盘 profile 的 node_modules**，不进 Git——另一台机器拿不到。要进仓库，**默认用方式 2（只记版本号）**；只有想改/检查源码、或插件没发布 npm 时，才用方式 1（vendor 进 plugins/）。
 
-### 方式 1：vendor 源码进 `plugins/`（想改/检查源码，或插件没发布 npm）
+### 方式 2：只记版本号（默认，已发布 npm、不用改源码）
+
+在 `profile/package.json` 注册两处：
+
+- `dsh.profile.bundles` 数组加 `"<pkg>"`
+- `dependencies` 加 `"<pkg>": "<version>"`（**精确版本号，不用 `link:`、别用 `^`**）
+
+跑 `setup.ps1` 时，`pnpm install` 会自动从 npm 把插件下载到 **DSH_HOME 目录**（`~/.dsh/profiles/web/node_modules/`）：本机没下过就现下、下过就复用，不放进我们仓库的 `plugins/`。另一台机器 clone 后跑 `setup.ps1` 同样自动补齐缺失的第三方插件。
+
+> 锁精确版本号（如 `"3.18.1"`）而不是 `^`：profile 的 `pnpm-lock.yaml` 不进 Git，`^` 会让不同机器解析到不同小版本。
+
+### 方式 1：vendor 源码进 `plugins/`（备选，想改/检查源码，或插件没发布 npm）
 
 ```powershell
 # 示例：vendor 已发布包 <pkg>@<version>
@@ -61,10 +72,6 @@ Pop-Location
 然后按上面「加一个新插件」注册：`dependencies` 写 `"<名字>": "link:../plugins/<名字>"`。
 
 > 用 `npm pack`（发布版包，含构建产物 `dist/`），别 `git clone`（源码仓库，含 `src/` + devDeps，可能没构建）。vendor 后删掉包内 `node_modules` / `package-lock.json`。
-
-### 方式 2：只记版本号（已发布 npm、不用改源码）
-
-`dependencies` 写 `"<pkg>": "<version>"`（普通版本号，不用 `link:`），setup.ps1 / pnpm 每台机器从 npm 拉。
 
 ## 另一台机器：从零跑起 exe
 
