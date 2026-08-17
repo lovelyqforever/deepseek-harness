@@ -12,7 +12,8 @@
         "dsh-titlebar",
         "dsh-background",
         "dsh-plugin-manager",
-        "dsh-session-archiver"
+        "dsh-session-archiver",
+        "@liustack/modlens"
       ]
     }
   },
@@ -23,6 +24,7 @@
     "dsh-titlebar": "link:../plugins/dsh-titlebar",
     "dsh-background": "link:../plugins/dsh-background",
     "dsh-plugin-manager": "link:../plugins/dsh-plugin-manager",
-    "dsh-session-archiver": "link:../plugins/dsh-session-archiver"
+    "dsh-session-archiver": "link:../plugins/dsh-session-archiver",
+    "@liustack/modlens": "3.18.2"
   }
 }
