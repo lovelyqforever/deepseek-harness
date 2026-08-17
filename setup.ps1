@@ -160,12 +160,14 @@ $cred = Join-Path $DshHome '.credentials.yaml'
 if (-not (Test-Path $cred)) {
     $credTemplate = @'
 # Fill in the API keys this machine needs (each machine fills its own)
-DEEPSEEK_API_KEY:
-NEON_API_KEY:
+# Uncomment the lines below and fill in real keys; leave them commented to boot
+# (the program still starts, but model calls will need a key)
+# DEEPSEEK_API_KEY: sk-your-key
+# NEON_API_KEY: your-key
 '@
     [System.IO.File]::WriteAllText($cred, $credTemplate, (New-Object System.Text.UTF8Encoding($false)))
     Assert-Utf8NoBom $cred
-    Write-Warn "Generated $cred - fill in your keys"
+    Write-Warn "Generated $cred - uncomment and fill in your keys (boot works without keys; model calls need them)"
 } else {
     Write-Ok '.credentials.yaml already exists, not overwriting.'
 }
