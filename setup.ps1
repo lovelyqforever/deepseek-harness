@@ -81,8 +81,16 @@ Write-Ok 'pnpm 已就绪'
 # 需建一个 junction 把 plugins/node_modules 指过去（DSH 官方文档机制）。
 Write-Step "建立插件依赖桥 (junction)"
 $pluginsNodeModules = Join-Path $RepoRoot 'plugins\node_modules'
+$alreadyJunction = $false
 if (Test-Path $pluginsNodeModules) {
-    Write-Ok 'plugins\node_modules 已存在，跳过'
+    $alreadyJunction = ((Get-Item $pluginsNodeModules -Force).Attributes -match 'ReparsePoint')
+    if (-not $alreadyJunction) {
+        Write-Warn 'plugins\node_modules 存在但不是 junction（普通目录），删除后重建'
+        Remove-Item $pluginsNodeModules -Recurse -Force
+    }
+}
+if ($alreadyJunction) {
+    Write-Ok 'plugins\node_modules 已是 junction，跳过'
 } else {
     $dshGlobalRoot = (npm root -g 2>$null | Out-String).Trim()
     $dshGlobalNodeModules = Join-Path (Join-Path (Join-Path $dshGlobalRoot '@deepseek-ai') 'dsh') 'node_modules'
