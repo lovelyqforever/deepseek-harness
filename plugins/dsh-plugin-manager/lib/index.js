@@ -139,10 +139,10 @@ function atomicWrite(file, content) {
   }
 }
 
-// 从 link: 目标目录读版本号，供展开详情展示。
-function readVersion(linkTarget) {
+// 从插件目录读版本号（link: 走仓库 plugins/ 目录，版本依赖走 live profile 的 node_modules）。
+function readVersion(dir) {
   try {
-    const manifest = JSON.parse(readFileSync(join(linkTarget, "package.json"), "utf8"));
+    const manifest = JSON.parse(readFileSync(join(dir, "package.json"), "utf8"));
     return manifest.version || null;
   } catch {
     return null;
@@ -152,13 +152,32 @@ function readVersion(linkTarget) {
 // 从插件自己的 cordis.patch.yml 读真实入口 id（bundle patch 的 `- id: X`）。
 // 有些插件入口 id ≠ 包名（如 @liustack/modlens 的入口 id 是 modlens），
 // 用包名当 id 去写 disabled 会匹配不到，所以以真实入口 id 为准。
-function readEntryId(linkTarget) {
+function readEntryId(dir) {
   try {
-    const text = readFileSync(join(linkTarget, "cordis.patch.yml"), "utf8");
+    const text = readFileSync(join(dir, "cordis.patch.yml"), "utf8");
     const m = /^\s*- id:\s*["']?([^"'\s]+)["']?/m.exec(text);
     return m ? m[1] : null;
   } catch {
     return null;
+  }
+}
+
+// 解析依赖的真实磁盘目录：link: 走仓库 plugins/ 目录，普通版本号走 live profile 的 node_modules。
+function depDir(config, pkgName, spec) {
+  if (typeof spec === "string" && spec.startsWith("link:")) {
+    return spec.slice("link:".length);
+  }
+  return join(profileDir(config), "node_modules", pkgName);
+}
+
+// 非 link: 依赖只有在它的 package.json 里带 dsh 字段（确实是 DSH 插件）时才算插件，
+// 避免把将来可能出现的普通 npm 库误列进开关列表。
+function isDshPlugin(dir) {
+  try {
+    const manifest = JSON.parse(readFileSync(join(dir, "package.json"), "utf8"));
+    return !!(manifest && manifest.dsh);
+  } catch {
+    return false;
   }
 }
 
@@ -171,14 +190,15 @@ function listPlugins(config) {
   const disabled = new Set([...liveNames, ...tplNames]);
   const plugins = [];
   for (const [pkgName, spec] of Object.entries(deps)) {
-    if (typeof spec !== "string" || !spec.startsWith("link:")) continue;
-    if (pkgName === MANAGER_NAME) continue;
-    const linkTarget = spec.slice("link:".length);
-    const entryId = readEntryId(linkTarget) || pkgName;
+    if (typeof spec !== "string" || pkgName === MANAGER_NAME) continue;
+    const isLink = spec.startsWith("link:");
+    const dir = depDir(config, pkgName, spec);
+    if (!isLink && !isDshPlugin(dir)) continue;
+    const entryId = readEntryId(dir) || pkgName;
     plugins.push({
       name: pkgName,
       enabled: !disabled.has(entryId),
-      version: readVersion(linkTarget),
+      version: readVersion(dir),
     });
   }
   plugins.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
@@ -191,13 +211,13 @@ function listPlugins(config) {
 // 启用/禁用：disabled=true 加条目，disabled=false 删条目；同时写两份。
 function setDisabled(config, name, disabled) {
   const { deps, repoRoot } = readLiveDependencies(config);
-  if (typeof deps[name] !== "string" || !deps[name].startsWith("link:")) {
+  if (typeof deps[name] !== "string") {
     throw new Error(`unknown plugin: ${name}`);
   }
   if (name === MANAGER_NAME) {
     throw new Error("cannot toggle the manager itself");
   }
-  const entryId = readEntryId(deps[name].slice("link:".length)) || name;
+  const entryId = readEntryId(depDir(config, name, deps[name])) || name;
   const live = livePatchFile(config);
   const tpl = templatePatchFile(config, repoRoot);
 
