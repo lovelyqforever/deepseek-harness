@@ -16,8 +16,7 @@
     1) Ensure pnpm is available (npm i -g pnpm if missing)
     2) Generate ~/.dsh/profiles/web (real directory), rewrite link: to absolute paths
     3) pnpm install, symlink plugins under plugins/ into node_modules
-    4) Generate a .credentials.yaml template (keys left empty for you to fill in)
-    5) Self-check: verify every plugin symlink is in place
+    4) Self-check: verify every plugin symlink is in place
 
   Usage (PowerShell / pwsh): .\setup.ps1
 #>
@@ -154,25 +153,7 @@ try {
 }
 Write-Ok 'pnpm install done'
 
-# ---------- 5) Credentials template ----------
-Write-Step "Credentials template"
-$cred = Join-Path $DshHome '.credentials.yaml'
-if (-not (Test-Path $cred)) {
-    $credTemplate = @'
-# Fill in the API keys this machine needs (each machine fills its own)
-# Uncomment the lines below and fill in real keys; leave them commented to boot
-# (the program still starts, but model calls will need a key)
-# DEEPSEEK_API_KEY: sk-your-key
-# NEON_API_KEY: your-key
-'@
-    [System.IO.File]::WriteAllText($cred, $credTemplate, (New-Object System.Text.UTF8Encoding($false)))
-    Assert-Utf8NoBom $cred
-    Write-Warn "Generated $cred - uncomment and fill in your keys (boot works without keys; model calls need them)"
-} else {
-    Write-Ok '.credentials.yaml already exists, not overwriting.'
-}
-
-# ---------- 6) Self-check ----------
+# ---------- 5) Self-check ----------
 Write-Step "Self-check"
 # Read plugin names dynamically from the profile's dependencies (link: deps); new plugins need no change here
 $profilePkg = Get-Content (Join-Path $ProfileLink 'package.json') -Raw | ConvertFrom-Json
