@@ -3,5 +3,4 @@
 - insert:
     - id: dsh-hello
       name: 'dsh-hello'
-      config:
-        greeting: '你好！这是一个可配置的问候语。'
+      config: {}

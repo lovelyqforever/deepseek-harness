@@ -518,36 +518,49 @@ void main() {
     }
 
     // =====================================================================
-    // 状态 store + fetch（与宿主端点通信）
+    // 状态：元数据（provider/file/params/readability）走 `background` 设置命名空间
+    // （settingsScope，跨重启持久化）；图片二进制仍通过 /save /file /delete 三个宿主端点。
     // =====================================================================
-    let state = null;
-    let loaded = false;
-    let loading = null;
-    const listeners = new Set();
+    let scope = null;
 
-    function setState(v) {
-      state = v;
-      loaded = true;
-      listeners.forEach((l) => l());
+    function metadataOf(snap) {
+      if (!snap || snap.status !== "ready") return null;
+      const v = snap.value;
+      if (!v || !v.provider) return null;
+      return {
+        provider: v.provider,
+        file: v.file,
+        params: v.params,
+        readability: v.readability,
+        url: v.provider === "image" && v.file ? "/plugins/background/file?v=" + encodeURIComponent(v.file) : undefined,
+      };
     }
-    function subscribe(l) {
-      listeners.add(l);
-      return function () { listeners.delete(l); };
+
+    function currentMeta() {
+      return scope ? metadataOf(scope.getSnapshot()) : null;
     }
-    function loadState() {
-      if (loading) return loading;
-      loading = (async function () {
-        try {
-          const res = await fetch("/plugins/background/state", { cache: "no-store" });
-          if (res.ok) {
-            const data = await res.json();
-            setState(data && data.provider ? data : null);
-          }
-        } catch (e) {}
-        loading = null;
-      })();
-      return loading;
+
+    function useBackground() {
+      const [snap, setSnap] = react.useState(scope ? scope.getSnapshot() : { status: "loading" });
+      react.useEffect(function () {
+        if (!scope) return undefined;
+        setSnap(scope.getSnapshot());
+        return scope.subscribe(function () { setSnap(scope.getSnapshot()); });
+      }, []);
+      return react.useMemo(function () { return metadataOf(snap); }, [snap]);
     }
+
+    async function deleteFile(file) {
+      if (!file) return;
+      try {
+        await fetch("/plugins/background/delete", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ file: file }),
+        });
+      } catch (e) {}
+    }
+
     async function saveImage(dataUrl) {
       const res = await fetch("/plugins/background/save", {
         method: "POST",
@@ -556,49 +569,29 @@ void main() {
       });
       if (!res.ok) throw new Error("save failed: " + res.status);
       const data = await res.json();
-      if (!data.ok) throw new Error(data.error || "save failed");
-      setState({ provider: data.provider, file: data.file, url: data.url, readability: data.readability });
-      applyDom(data);
+      if (!data.ok || !data.file) throw new Error(data.error || "save failed");
+      const old = currentMeta();
+      await deleteFile(old && old.file && old.file !== data.file ? old.file : null);
+      await scope.set("provider", "image");
+      await scope.set("file", data.file);
       return data;
     }
     async function clearBackground() {
-      const res = await fetch("/plugins/background/clear", { method: "POST" });
-      if (!res.ok) throw new Error("clear failed: " + res.status);
-      await res.json();
-      setState(null);
-      clearDom();
+      const old = currentMeta();
+      await deleteFile(old && old.file);
+      await scope.unset("provider");
+      await scope.unset("file");
     }
     async function saveReadability(settings) {
-      const res = await fetch("/plugins/background/readability", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(settings),
-      });
-      if (!res.ok) throw new Error("readability save failed: " + res.status);
-      const data = await res.json();
-      if (state) setState({ ...state, readability: data.readability });
-      return data.readability;
+      await scope.set("readability", settings);
+      return settings;
     }
     async function saveAurora(params) {
-      const res = await fetch("/plugins/background/aurora", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ params: params }),
-      });
-      if (!res.ok) throw new Error("aurora save failed: " + res.status);
-      const data = await res.json();
-      if (!data.ok) throw new Error(data.error || "aurora save failed");
-      setState({ provider: data.provider, params: data.params, readability: data.readability });
-      return data;
-    }
-    function useBackground() {
-      const [v, setV] = react.useState(state);
-      react.useEffect(function () {
-        setV(state);
-        if (!loaded) loadState();
-        return subscribe(function () { setV(state); });
-      }, []);
-      return v;
+      const old = currentMeta();
+      await deleteFile(old && old.file);
+      await scope.set("provider", "aurora");
+      await scope.set("params", params);
+      return { provider: "aurora", params: params };
     }
 
     // =====================================================================
@@ -802,22 +795,33 @@ void main() {
     // =====================================================================
     // 客户端插件 apply
     // =====================================================================
-    const inject = ["theme", "slots"];
+    const inject = ["theme", "slots", "settingsScope"];
 
     function apply(ctx) {
       pluginCtx = ctx;
 
+      // 绑定 background 命名空间 scope；订阅其变化，实时还原/清除背景 DOM。
+      // 仅当 provider/file（背景结构）变化时才整体重刷，readability/params 的细调
+      // 已由配置卡的 applyReadabilityLive / applyAuroraLive 即时生效，避免重刷画布闪烁。
+      scope = ctx.settingsScope.bind({ namespace: "background" });
+      let lastProvider = undefined;
+      let lastFile = undefined;
+      scope.subscribe(function () {
+        const meta = metadataOf(scope.getSnapshot());
+        const provider = meta ? meta.provider : null;
+        const file = meta ? (meta.file || null) : null;
+        if (provider === lastProvider && file === lastFile) return;
+        lastProvider = provider;
+        lastFile = file;
+        if (meta) applyDom(meta);
+        else clearDom();
+      });
+
       ctx.slots.inject("settings.plugin.item", function () {
         return ctx.slots.register({
           name: "settings.plugin.item",
-          id: "background",
-          order: 100,
+          key: "background",
         }, BackgroundCard);
-      });
-
-      // 启动时还原背景（不依赖用户打开设置页）
-      loadState().then(function () {
-        if (state) applyDom(state);
       });
     }
 

@@ -28,6 +28,21 @@ function Write-Ok($m)   { Write-Host "    [ok] $m" -ForegroundColor Green }
 function Write-Warn($m) { Write-Host "    [!]  $m" -ForegroundColor Yellow }
 function Write-Fail($m) { Write-Host "    [X]  $m" -ForegroundColor Red }
 
+# 无 BOM 守卫（双保险第二层）：读回文件，若发现 UTF-8 BOM（EF BB BF）则当场剥离并告警。
+# 即使将来有人又把写入路径改回会带 BOM 的写法，这一层也会在同一次 setup 里兜底，
+# 保证 dsh 的 readProfileManifest（直接 JSON.parse、不剥 BOM）永不踩雷。
+function Assert-Utf8NoBom {
+  param([string]$Path)
+  if (-not (Test-Path $Path)) { return }
+  $bytes = [System.IO.File]::ReadAllBytes($Path)
+  if ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) {
+    $clean = New-Object byte[] ($bytes.Length - 3)
+    [Array]::Copy($bytes, 3, $clean, 0, $clean.Length)
+    [System.IO.File]::WriteAllBytes($Path, $clean)
+    Write-Warn "已自动剥离 UTF-8 BOM：$Path"
+  }
+}
+
 # ---------- 1) 定位仓库根（= 脚本所在目录） ----------
 $RepoRoot   = $PSScriptRoot
 $ProfileSrc = Join-Path $RepoRoot 'profile'
@@ -64,6 +79,13 @@ Write-Ok 'pnpm 已就绪'
 Write-Step "生成 $ProfileLink"
 if (-not (Test-Path $ProfilesDir)) { New-Item -ItemType Directory -Path $ProfilesDir -Force | Out-Null }
 
+# 落地前先清掉更早的 profile 备份（web.bak.*），只保留本次即将生成的最新一份，防止越堆越多
+$oldBackups = Get-ChildItem $ProfilesDir -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -like 'web.bak.*' }
+foreach ($old in $oldBackups) {
+    Write-Warn "删除旧备份 $($old.Name)"
+    Remove-Item $old.FullName -Recurse -Force
+}
+
 # 已存在就备份（不管它是真实目录还是链接）
 if (Test-Path $ProfileLink) {
     $backup = "$ProfileLink.bak." + (Get-Date -Format 'yyyyMMdd-HHmmss')
@@ -77,7 +99,10 @@ New-Item -ItemType Directory -Path $ProfileLink -Force | Out-Null
 $pluginsDir = (($RepoRoot -replace '\\','/') + '/plugins')
 $pkgText = (Get-Content (Join-Path $ProfileSrc 'package.json') -Raw)
 $pkgText = $pkgText.Replace('link:../plugins', "link:$pluginsDir")
-Set-Content -Path (Join-Path $ProfileLink 'package.json') -Value $pkgText -Encoding utf8
+# 无 BOM 写入：Windows PowerShell 5.1 的 `Set-Content -Encoding utf8` 会在文件头写 EF BB BF，
+# 而 dsh 的 readProfileManifest 是直接 JSON.parse(raw)，不剥 BOM，导致启动崩溃。改用 UTF8Encoding($false)。
+[System.IO.File]::WriteAllText((Join-Path $ProfileLink 'package.json'), $pkgText, (New-Object System.Text.UTF8Encoding($false)))
+Assert-Utf8NoBom (Join-Path $ProfileLink 'package.json')
 
 # 复制 pnpm 配置（pnpm install 需要它）
 Copy-Item (Join-Path $ProfileSrc 'pnpm-workspace.yaml') (Join-Path $ProfileLink 'pnpm-workspace.yaml') -Force
@@ -103,11 +128,13 @@ Write-Ok 'pnpm install 完成'
 Write-Step "密钥模板"
 $cred = Join-Path $DshHome '.credentials.yaml'
 if (-not (Test-Path $cred)) {
-    @'
+    $credTemplate = @'
 # 填入本机要用的 API key（每台机器各填各的）
 DEEPSEEK_API_KEY:
 NEON_API_KEY:
-'@ | Set-Content -Path $cred -Encoding utf8
+'@
+    [System.IO.File]::WriteAllText($cred, $credTemplate, (New-Object System.Text.UTF8Encoding($false)))
+    Assert-Utf8NoBom $cred
     Write-Warn "已生成 $cred —— 请把 key 填进去"
 } else {
     Write-Ok '已存在 .credentials.yaml，不覆盖。'

@@ -48,54 +48,29 @@ window.__ModuleLoader__.load({
       document.head.appendChild(tag);
     }
 
-    // 问候语内存存储：配置卡和右下角横幅共享，通过 fetch 读写宿主端点。
-    let greeting = null;
-    let greetingLoaded = false;
-    let loading = null;
-    const listeners = new Set();
+    // 问候语状态：配置卡和右下角横幅共享同一个 settings 命名空间 scope（rc.7 契约）。
+    // scope 在 apply 里通过 ctx.settingsScope.bind({ namespace: "hello" }) 绑定，
+    // 读写都走 settingsScope，由宿主 settings 层负责跨重启持久化。
+    let scope = null;
 
-    function setGreeting(v) {
-      greeting = v;
-      greetingLoaded = true;
-      listeners.forEach(function (l) { l(); });
-    }
-    function subscribe(l) {
-      listeners.add(l);
-      return function () { listeners.delete(l); };
-    }
-    function loadGreeting() {
-      if (loading) return loading;
-      loading = (async function () {
-        try {
-          const res = await fetch("/plugins/hello/greeting", { cache: "no-store" });
-          if (res.ok) {
-            const data = await res.json();
-            if (typeof data.greeting === "string") setGreeting(data.greeting);
-          }
-        } catch (e) {}
-        loading = null;
-      })();
-      return loading;
-    }
-    async function saveGreeting(v) {
-      const res = await fetch("/plugins/hello/greeting", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ greeting: v }),
-      });
-      if (!res.ok) throw new Error("save failed: " + res.status);
-      const data = await res.json();
-      setGreeting(data.greeting);
-      return data.greeting;
-    }
-    function useGreeting() {
-      const [v, setV] = react.useState(greeting);
+    function useScopeSnapshot() {
+      const [snap, setSnap] = react.useState(scope ? scope.getSnapshot() : { status: "loading" });
       react.useEffect(function () {
-        setV(greeting);
-        if (!greetingLoaded) loadGreeting();
-        return subscribe(function () { setV(greeting); });
+        if (!scope) return undefined;
+        setSnap(scope.getSnapshot());
+        return scope.subscribe(function () { setSnap(scope.getSnapshot()); });
       }, []);
-      return v;
+      return snap;
+    }
+
+    function greetingOf(snap) {
+      if (!snap || snap.status !== "ready") return "";
+      const v = snap.value;
+      return v && typeof v.greeting === "string" ? v.greeting : "";
+    }
+
+    function useGreeting() {
+      return greetingOf(useScopeSnapshot());
     }
 
     function Chevron(props) {
@@ -164,7 +139,7 @@ window.__ModuleLoader__.load({
                 const value = draft.trim();
                 setSaving(true);
                 setFailed(false);
-                saveGreeting(value).then(function () {
+                scope.set("greeting", value).then(function () {
                   setSaving(false);
                   setDraft(null);
                 }).catch(function () {
@@ -187,15 +162,17 @@ window.__ModuleLoader__.load({
       );
     }
 
-    const inject = ["slots"];
+    const inject = ["slots", "settingsScope"];
 
     function apply(ctx) {
-      // 配置卡 → 设置 → 插件 → 插件配置
+      // 绑定 hello 命名空间 scope：配置卡读写 + 横幅显示共用。
+      scope = ctx.settingsScope.bind({ namespace: "hello" });
+
+      // 配置卡 → 设置 → 插件 → 插件配置（rc.7 keyed：key = 命名空间）
       ctx.slots.inject("settings.plugin.item", function () {
         return ctx.slots.register({
           name: "settings.plugin.item",
-          id: "hello",
-          order: 100,
+          key: "hello",
         }, HelloCard);
       });
 
