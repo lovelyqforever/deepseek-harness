@@ -53,6 +53,15 @@ window.__ModuleLoader__.load({
       ".dspm_knob{width:14px;height:14px;border-radius:999px;background:var(--dsw-alias-label-primary);position:absolute;top:3px;left:3px;transition:transform .16s;box-shadow:0 1px 2px rgba(0,0,0,.3)}",
       ".dspm_switch[aria-checked=true] .dspm_knob{transform:translateX(16px)}",
       ".dspm_switch:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary);outline-offset:2px;border-radius:999px}",
+      // 更新：黄点 + 「待更新」tag + 更新按钮 + 检查更新按钮
+      ".dspm_statusDot[data-update=true]{background:var(--dsw-alias-state-warning-primary,#e6a23c)}",
+      ".dspm_configTag[data-update=true]{background:color-mix(in srgb, var(--dsw-alias-state-warning-primary,#e6a23c) 12%, transparent);color:var(--dsw-alias-state-warning-primary,#e6a23c)}",
+      ".dspm_updateBtn{box-sizing:border-box;border:1px solid #0000;background:var(--dsw-alias-label-primary);color:var(--dsw-alias-bg-layer-3);font:inherit;font-size:13px;line-height:1.5;cursor:pointer;border-radius:8px;padding:5px 14px}",
+      ".dspm_updateBtn:hover:not(:disabled){opacity:.9}",
+      ".dspm_updateBtn:disabled{opacity:.4;cursor:default}",
+      ".dspm_refresh{appearance:none;box-sizing:border-box;border:1px solid var(--dsw-alias-border-l2);background:0 0;color:var(--dsw-alias-label-secondary);font:inherit;font-size:12px;line-height:1.5;cursor:pointer;border-radius:6px;padding:3px 10px;margin-left:auto;flex:none}",
+      ".dspm_refresh:hover:not(:disabled){border-color:var(--dsw-alias-label-dimmed);color:var(--dsw-alias-label-primary)}",
+      ".dspm_refresh:disabled{opacity:.4;cursor:default}",
     ].join("");
 
     const tagId = "dsh-plugin-manager/styles";
@@ -79,6 +88,22 @@ window.__ModuleLoader__.load({
       if (!res.ok) throw new Error("set failed: " + res.status);
       const data = await res.json();
       if (!data.ok) throw new Error(data.error || "set failed");
+      return data;
+    }
+    async function apiCheck() {
+      const res = await fetch("/plugins/plugin-manager/check", { cache: "no-store" });
+      if (!res.ok) throw new Error("check failed: " + res.status);
+      return await res.json();
+    }
+    async function apiUpdate(name) {
+      const res = await fetch("/plugins/plugin-manager/update", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name }),
+      });
+      if (!res.ok) throw new Error("update failed: " + res.status);
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || "update failed");
       return data;
     }
 
@@ -140,12 +165,14 @@ window.__ModuleLoader__.load({
       } catch {}
     }
 
-    function PluginManagerTab({ t, list, setEnabled }) {
+    function PluginManagerTab({ t, list, setEnabled, check, update }) {
       const catalogId = react.useId();
       const [query, setQuery] = react.useState("");
       const [state, setState] = react.useState({ status: "loading" });
       const [expanded, setExpanded] = react.useState(() => readPersistedUI().expanded);
       const [busy, setBusy] = react.useState(new Set());
+      const [updating, setUpdating] = react.useState(new Set());
+      const [checking, setChecking] = react.useState(false);
       const [dirty, setDirty] = react.useState(() => readPersistedUI().dirty);
       const [failed, setFailed] = react.useState(false);
 
@@ -190,6 +217,37 @@ window.__ModuleLoader__.load({
         });
       };
 
+      const doUpdate = (p) => {
+        if (updating.has(p.name)) return;
+        setUpdating((prev) => { const n = new Set(prev); n.add(p.name); return n; });
+        setFailed(false);
+        update(p.name).then((data) => {
+          setState((prev) => {
+            if (prev.status !== "ready") return prev;
+            const plugins = prev.snapshot.plugins.map((x) => x.name === p.name ? { ...x, version: data.version, latest: null } : x);
+            return { status: "ready", snapshot: { ...prev.snapshot, plugins } };
+          });
+          setDirty(true);
+        }).catch(() => {
+          setFailed(true);
+        }).finally(() => {
+          setUpdating((prev) => { const n = new Set(prev); n.delete(p.name); return n; });
+        });
+      };
+
+      const doCheck = () => {
+        if (checking) return;
+        setChecking(true);
+        setFailed(false);
+        check().then((snapshot) => {
+          setState({ status: "ready", snapshot });
+        }).catch(() => {
+          setFailed(true);
+        }).finally(() => {
+          setChecking(false);
+        });
+      };
+
       return react.createElement("div", { className: "dspm_section", "aria-busy": state.status === "loading" },
         state.status === "loading" ? react.createElement("p", { className: "dspm_status" }, t("loading")) : null,
         state.status === "error" ? react.createElement("div", { className: "dspm_failure" },
@@ -211,14 +269,21 @@ window.__ModuleLoader__.load({
           ),
           react.createElement("div", { className: "dspm_catalogHeading" },
             react.createElement("h3", null, t("catalog")),
-            react.createElement("span", { "data-plugin-count": filtered.length }, String(filtered.length))
+            react.createElement("span", { "data-plugin-count": filtered.length }, String(filtered.length)),
+            react.createElement("button", {
+              type: "button",
+              className: "dspm_refresh",
+              disabled: checking,
+              onClick: doCheck,
+            }, checking ? t("checkingUpdates") : t("refreshUpdates"))
           ),
           entries.length === 0 ? react.createElement("p", { className: "dspm_status" }, t("empty")) : null,
           entries.length > 0 && filtered.length === 0 ? react.createElement("p", { className: "dspm_status" }, t("emptySearch")) : null,
           filtered.length > 0 ? react.createElement("ul", { className: "dspm_cards" },
             filtered.map((p) => {
               const title = shortName(p.name);
-              const tag = p.enabled ? t("enabledTag") : t("disabledTag");
+              const hasUpdate = !!p.latest;
+              const tag = hasUpdate ? t("updateTag") : (p.enabled ? t("enabledTag") : t("disabledTag"));
               const open = expanded === p.name;
               const detailId = catalogId + "-details-" + encodeURIComponent(p.name);
               const switchLabel = (p.enabled ? t("disable") : t("enable")) + " " + p.name;
@@ -237,8 +302,8 @@ window.__ModuleLoader__.load({
                 },
                   react.createElement("strong", { className: "dspm_cardTitle", title: p.name }, title),
                   react.createElement("span", { className: "dspm_cardTrailing" },
-                    react.createElement("span", { className: "dspm_statusDot", "data-enabled": p.enabled ? "true" : "false" }),
-                    react.createElement("span", { className: "dspm_configTag", "data-enabled": p.enabled ? "true" : "false" }, tag),
+                    react.createElement("span", { className: "dspm_statusDot", "data-update": hasUpdate ? "true" : void 0, "data-enabled": hasUpdate ? void 0 : (p.enabled ? "true" : "false") }),
+                    react.createElement("span", { className: "dspm_configTag", "data-update": hasUpdate ? "true" : void 0, "data-enabled": hasUpdate ? void 0 : (p.enabled ? "true" : "false") }, tag),
                     react.createElement(ChevronIcon, { className: "dspm_chevron" })
                   )
                 ),
@@ -251,9 +316,21 @@ window.__ModuleLoader__.load({
                     react.createElement("div", { className: "dspm_detailRow" },
                       react.createElement("dt", null, t("version")),
                       react.createElement("dd", { className: "dspm_entryValue" }, p.version || "—")
-                    )
+                    ),
+                    hasUpdate ? react.createElement("div", { className: "dspm_detailRow" },
+                      react.createElement("dt", null, t("latestVersion")),
+                      react.createElement("dd", { className: "dspm_entryValue" }, p.latest)
+                    ) : null
                   ),
-                  react.createElement("div", { className: "dspm_toggleRow" },
+                  hasUpdate ? react.createElement("div", { className: "dspm_toggleRow" },
+                    react.createElement("span", { className: "dspm_toggleLabel" }, t("updateAction")),
+                    react.createElement("button", {
+                      type: "button",
+                      className: "dspm_updateBtn",
+                      disabled: updating.has(p.name),
+                      onClick: () => doUpdate(p),
+                    }, updating.has(p.name) ? t("updating") : (t("updateAction") + " → " + p.latest))
+                  ) : react.createElement("div", { className: "dspm_toggleRow" },
                     react.createElement("span", { className: "dspm_toggleLabel" }, t("toggle")),
                     react.createElement(Switch, {
                       checked: p.enabled,
@@ -274,48 +351,60 @@ window.__ModuleLoader__.load({
     const inject = ["slots", "locale"];
 
     const zh = {
-      tab: "插件开关",
+      tab: "插件管理",
       loading: "正在读取插件…",
       error: "暂时无法读取插件。",
       retry: "重试",
       search: "搜索插件",
-      catalog: "插件开关",
+      catalog: "插件管理",
       empty: "没有可管理的插件。",
       emptySearch: "没有匹配的插件。",
       enabledTag: "已启用",
       disabledTag: "已停用",
+      updateTag: "待更新",
       enable: "启用",
       disable: "停用",
       package: "包名",
       version: "版本",
+      latestVersion: "最新版本",
       toggle: "启用/停用",
+      updateAction: "更新",
+      updating: "更新中…",
+      refreshUpdates: "检查更新",
+      checkingUpdates: "检查中…",
       restartHint: "改动已保存，重启 exe 后生效。",
-      saveFailed: "保存失败，请重试。",
+      saveFailed: "操作失败，请重试。",
     };
     const en = {
-      tab: "Plugin toggles",
+      tab: "Plugin Management",
       loading: "Reading plugins…",
       error: "Plugins are temporarily unavailable.",
       retry: "Retry",
       search: "Search plugins",
-      catalog: "Plugin toggles",
+      catalog: "Plugin Management",
       empty: "No manageable plugins.",
       emptySearch: "No matching plugins.",
       enabledTag: "Enabled",
       disabledTag: "Disabled",
+      updateTag: "Update available",
       enable: "Enable",
       disable: "Disable",
       package: "Package",
       version: "Version",
+      latestVersion: "Latest",
       toggle: "Enable / Disable",
+      updateAction: "Update",
+      updating: "Updating…",
+      refreshUpdates: "Check updates",
+      checkingUpdates: "Checking…",
       restartHint: "Changes saved. Restart the app to apply.",
-      saveFailed: "Save failed, please retry.",
+      saveFailed: "Operation failed, please retry.",
     };
 
     function apply(ctx) {
       ctx.effect(() => ctx.locale.register(NS, { zh, en }), "dsh-plugin-manager: dictionaries");
       const t = ctx.locale.bind(NS);
-      const injected = () => ({ list: apiList, setEnabled: apiSet });
+      const injected = () => ({ list: apiList, setEnabled: apiSet, check: apiCheck, update: apiUpdate });
       ctx.slots.inject("settings.plugins.tab", () => ctx.slots.register({
         name: "settings.plugins.tab",
         id: "manage",

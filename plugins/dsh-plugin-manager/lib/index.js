@@ -4,9 +4,11 @@ import {
   mkdirSync,
   renameSync,
   unlinkSync,
+  existsSync,
 } from "node:fs";
 import { join, dirname, isAbsolute } from "node:path";
 import { homedir } from "node:os";
+import { spawn } from "node:child_process";
 
 // dsh-plugin-manager 宿主半。
 // 目标：让用户在 Web GUI 的「设置 → 插件 → 插件开关」里用开关控制自有插件的启用/禁用，
@@ -73,6 +75,15 @@ function templatePatchFile(config, repoRoot) {
     );
   }
   return repoRoot ? join(repoRoot, "profile", "cordis.patch.yml") : null;
+}
+
+// 仓库模板的 package.json（用于把第三方插件的版本号同步进 Git，供另一台机器复用）。
+function templateManifestFile(config, repoRoot) {
+  const override = config?.templateProfileDir;
+  const base = override
+    ? (isAbsolute(override) ? override : join(dshHome(), override))
+    : (repoRoot ? join(repoRoot, "profile") : null);
+  return base ? join(base, "package.json") : null;
 }
 
 // —— cordis.patch.yml 的极简行解析/序列化（只关心 `- id: X` + `disabled: true`）——
@@ -181,6 +192,107 @@ function isDshPlugin(dir) {
   }
 }
 
+// —— 第三方插件更新检测（只针对方式 2 的版本号依赖）——
+let updateCache = new Map(); // pkgName -> npm 最新版本号（仅记录"有更新"的）
+
+function registryUrl(pkgName) {
+  // scoped：@scope/name -> @scope%2Fname；unscoped 原样
+  const enc = pkgName.includes("/") ? pkgName.replace("/", "%2F") : pkgName;
+  return "https://registry.npmjs.org/" + enc + "/latest";
+}
+
+async function fetchLatest(pkgName) {
+  const res = await fetch(registryUrl(pkgName), { headers: { accept: "application/json" } });
+  if (!res.ok) return null;
+  const data = await res.json();
+  return data && typeof data.version === "string" ? data.version : null;
+}
+
+function isNewer(latest, installed) {
+  if (!latest || !installed || latest === installed) return false;
+  const la = String(latest).split(".").map((n) => parseInt(n, 10) || 0);
+  const ia = String(installed).split(".").map((n) => parseInt(n, 10) || 0);
+  const len = Math.max(la.length, ia.length);
+  for (let i = 0; i < len; i++) {
+    const a = la[i] ?? 0, b = ia[i] ?? 0;
+    if (a !== b) return a > b;
+  }
+  return false;
+}
+
+async function refreshUpdates(config) {
+  const { deps } = readLiveDependencies(config);
+  const next = new Map();
+  for (const [pkgName, spec] of Object.entries(deps)) {
+    if (typeof spec !== "string" || spec.startsWith("link:")) continue;
+    if (pkgName === MANAGER_NAME) continue;
+    const dir = depDir(config, pkgName, spec);
+    if (!isDshPlugin(dir)) continue;
+    const installed = readVersion(dir);
+    try {
+      const latest = await fetchLatest(pkgName);
+      if (latest && installed && isNewer(latest, installed)) next.set(pkgName, latest);
+    } catch {}
+  }
+  updateCache = next;
+  return next;
+}
+
+function runPnpmInstall(config) {
+  return new Promise((resolve, reject) => {
+    const child = spawn("pnpm", ["install"], {
+      cwd: profileDir(config),
+      shell: true,
+      windowsHide: true,
+    });
+    let out = "";
+    let err = "";
+    child.stdout?.on("data", (c) => { out += c; });
+    child.stderr?.on("data", (c) => { err += c; });
+    child.on("error", (e) => reject(e));
+    child.on("close", (code) => {
+      if (code === 0) resolve();
+      else reject(new Error("pnpm install failed (exit " + code + "): " + (err || out).trim()));
+    });
+  });
+}
+
+async function updatePlugin(config, name) {
+  const { deps, repoRoot } = readLiveDependencies(config);
+  const spec = deps[name];
+  if (typeof spec !== "string" || spec.startsWith("link:")) {
+    throw new Error(`not an updatable third-party plugin: ${name}`);
+  }
+  if (name === MANAGER_NAME) throw new Error("cannot update the manager itself");
+  const latest = updateCache.get(name) || (await fetchLatest(name));
+  if (!latest) throw new Error("cannot determine latest version for " + name);
+
+  // 1) 改 C 盘 live package.json 的版本号（本机立即生效的依赖描述）
+  const liveFile = liveManifestFile(config);
+  const live = JSON.parse(readFileSync(liveFile, "utf8"));
+  live.dependencies = live.dependencies || {};
+  live.dependencies[name] = latest;
+  atomicWrite(liveFile, JSON.stringify(live, null, 2) + "\n");
+
+  // 2) 改仓库模板 package.json 的版本号（进 Git、跨机同步）
+  const tpl = templateManifestFile(config, repoRoot);
+  if (tpl && existsSync(tpl)) {
+    const tplManifest = JSON.parse(readFileSync(tpl, "utf8"));
+    tplManifest.dependencies = tplManifest.dependencies || {};
+    tplManifest.dependencies[name] = latest;
+    atomicWrite(tpl, JSON.stringify(tplManifest, null, 2) + "\n");
+  }
+
+  // 3) 重新拉取安装新版本
+  await runPnpmInstall(config);
+
+  // 4) 清掉这条更新记录
+  updateCache.delete(name);
+
+  console.log(`[dsh-plugin-manager] updated ${name} -> ${latest}`);
+  return { name, version: latest };
+}
+
 // 列出「我的插件」及启用状态
 function listPlugins(config) {
   const { deps, repoRoot } = readLiveDependencies(config);
@@ -195,11 +307,13 @@ function listPlugins(config) {
     const dir = depDir(config, pkgName, spec);
     if (!isLink && !isDshPlugin(dir)) continue;
     const entryId = readEntryId(dir) || pkgName;
-    plugins.push({
+    const p = {
       name: pkgName,
       enabled: !disabled.has(entryId),
       version: readVersion(dir),
-    });
+    };
+    if (!isLink) p.latest = updateCache.get(pkgName) || null;
+    plugins.push(p);
   }
   plugins.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
   return {
@@ -246,6 +360,9 @@ function sendJson(res, status, payload) {
 
 export function apply(ctx, config) {
   const cfg = config ?? {};
+
+  // 启动时后台检查一次第三方插件更新（不阻塞启动，结果缓存，供 /list 使用）。
+  refreshUpdates(cfg).catch(() => {});
 
   ctx.webServer.register({
     kind: "exact",
@@ -304,6 +421,58 @@ export function apply(ctx, config) {
         } catch (e) {
           sendJson(res, 400, { ok: false, error: String(e?.message ?? e) });
         }
+      });
+    },
+  });
+
+  ctx.webServer.register({
+    kind: "exact",
+    path: "/plugins/plugin-manager/check",
+    handler: async (req, res) => {
+      if (req.method !== "GET" && req.method !== "HEAD") {
+        res.writeHead(405);
+        res.end();
+        return;
+      }
+      try {
+        await refreshUpdates(cfg);
+        sendJson(res, 200, { ok: true, ...listPlugins(cfg) });
+      } catch (e) {
+        sendJson(res, 500, { ok: false, error: String(e?.message ?? e) });
+      }
+    },
+  });
+
+  ctx.webServer.register({
+    kind: "exact",
+    path: "/plugins/plugin-manager/update",
+    handler: (req, res) => {
+      if (req.method !== "POST") {
+        res.writeHead(405);
+        res.end();
+        return;
+      }
+      let raw = "";
+      req.on("data", (c) => {
+        raw += c;
+      });
+      req.on("end", () => {
+        let body;
+        try {
+          body = JSON.parse(raw);
+        } catch {}
+        const name = body?.name;
+        if (typeof name !== "string") {
+          sendJson(res, 400, { ok: false, error: "invalid body: expect { name: string }" });
+          return;
+        }
+        updatePlugin(cfg, name)
+          .then((result) => {
+            sendJson(res, 200, { ok: true, ...result });
+          })
+          .catch((e) => {
+            sendJson(res, 400, { ok: false, error: String(e?.message ?? e) });
+          });
       });
     },
   });
