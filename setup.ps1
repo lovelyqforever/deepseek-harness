@@ -75,6 +75,25 @@ if (-not (Get-Command pnpm -ErrorAction SilentlyContinue)) {
 }
 Write-Ok 'pnpm 已就绪'
 
+# ---------- 2.5) 建立插件依赖桥（junction） ----------
+# plugins/ 下的插件若 import @deepseek-ai/*（schemastery / dsh-settings 等），
+# 因为插件在本仓库（D 盘），Node 无法向上解析到 C 盘全局 dsh 的 node_modules，
+# 需建一个 junction 把 plugins/node_modules 指过去（DSH 官方文档机制）。
+Write-Step "建立插件依赖桥 (junction)"
+$pluginsNodeModules = Join-Path $RepoRoot 'plugins\node_modules'
+if (Test-Path $pluginsNodeModules) {
+    Write-Ok 'plugins\node_modules 已存在，跳过'
+} else {
+    $dshGlobalRoot = (npm root -g 2>$null | Out-String).Trim()
+    $dshGlobalNodeModules = Join-Path (Join-Path (Join-Path $dshGlobalRoot '@deepseek-ai') 'dsh') 'node_modules'
+    if ($dshGlobalRoot -and (Test-Path $dshGlobalNodeModules)) {
+        New-Item -ItemType Junction -Path $pluginsNodeModules -Target $dshGlobalNodeModules | Out-Null
+        Write-Ok "已建 junction: plugins\node_modules -> $dshGlobalNodeModules"
+    } else {
+        Write-Warn "未找到全局 dsh 的 node_modules（$dshGlobalNodeModules），跳过；插件若 import @deepseek-ai/* 会加载失败"
+    }
+}
+
 # ---------- 3) 落地 profile（真实目录 + 绝对 link） ----------
 Write-Step "生成 $ProfileLink"
 if (-not (Test-Path $ProfilesDir)) { New-Item -ItemType Directory -Path $ProfilesDir -Force | Out-Null }
