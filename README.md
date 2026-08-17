@@ -32,6 +32,8 @@ DSH 启动时**只读** `~/.dsh/profiles/web/package.json`（C 盘，DSH_HOME �
 
 > ⚠️ **改配置永远改仓库里的模板，不要直接改 C 盘那份**（会被 setup.ps1 覆盖，也不进 Git）。
 
+> **`setup.ps1` 只负责把模板落地/同步到 C 盘**：两个场景——① 新机器首次搭建；② 你在模板里改了内容（自有插件、bundles、第三方插件版本号）后同步到本机。**日常安装、更新、启停第三方插件不经过它**：本机用 `pnpm add "<pkg>@<version>" --save-exact` 或插件管理界面里的「更新」按钮，模板里的版本号留给另一台机器 clone 后跑 setup.ps1 自动补齐。
+
 `profile/` 下没有 `cordis.yml` / `cordis.patch.yml`——它们由 DSH 启动时自动生成/重写，不需要提交。
 
 ## 加一个新插件（四步）
@@ -40,7 +42,7 @@ DSH 启动时**只读** `~/.dsh/profiles/web/package.json`（C 盘，DSH_HOME �
 2. 在 `profile/package.json` 注册两处：
    - `dsh.profile.bundles` 数组加 `"<名字>"`
    - `dependencies` 加 `"<名字>": "link:../plugins/<名字>"`
-3. **跑 `.\setup.ps1`（本机生效，必做）**：把模板同步到 C 盘 profile + 建软链，然后重启 exe。
+3. **跑 `.\setup.ps1`（把这次模板变更同步到本机 C 盘）**：把模板同步到 C 盘 profile + 建软链，然后重启 exe。
 4. `git add -A && git commit && git push`（另一台机器 clone 后跑 setup.ps1 得到同样结果）。
 
 ## 第三方插件（从网上装的）
@@ -54,7 +56,8 @@ DSH 启动时**只读** `~/.dsh/profiles/web/package.json`（C 盘，DSH_HOME �
 - `dsh.profile.bundles` 数组加 `"<pkg>"`
 - `dependencies` 加 `"<pkg>": "<version>"`（**精确版本号，不用 `link:`、别用 `^`**）
 
-跑 `setup.ps1` 时，`pnpm install` 会自动从 npm 把插件下载到 **DSH_HOME 目录**（`~/.dsh/profiles/web/node_modules/`）：本机没下过就现下、下过就复用，不放进我们仓库的 `plugins/`。另一台机器 clone 后跑 `setup.ps1` 同样自动补齐缺失的第三方插件。
+- **本机下载（不跑 setup.ps1）**：直接 `pnpm add "<pkg>@<version>" --save-exact`（在 `~/.dsh/profiles/web` 目录执行），或用插件管理界面里的「更新」按钮；插件装进 **DSH_HOME 目录**（`~/.dsh/profiles/web/node_modules/`），不放进仓库 `plugins/`。
+- **跨机同步**：模板里记的版本号只负责让另一台机器 clone 后跑 `setup.ps1` 时，由 `pnpm install` 自动补齐缺失的第三方插件。
 
 > 锁精确版本号（如 `"3.18.1"`）而不是 `^`：profile 的 `pnpm-lock.yaml` 不进 Git，`^` 会让不同机器解析到不同小版本。
 
