@@ -47,9 +47,9 @@ DSH 启动时**只读** `~/.dsh/profiles/web/package.json`（C 盘，DSH_HOME �
 
 ## 第三方插件（从网上装的）
 
-网上插件的默认安装命令（`dsh plugin add <pkg>` / `npm i <pkg>`）会装进 **C 盘 profile 的 node_modules**，不进 Git——另一台机器拿不到。要进仓库，**默认用方式 2（只记版本号）**；只有想改/检查源码、或插件没发布 npm 时，才用方式 1（vendor 进 plugins/）。
+网上插件的默认安装命令（`dsh plugin add <pkg>` / `npm i <pkg>`）会装进 **C 盘 profile 的 node_modules**，不进 Git——另一台机器拿不到。要进仓库，**默认用方式 1（只记版本号）**；只有想改/检查源码、或插件没发布 npm 时，才用方式 2（vendor 进 plugins/）。
 
-### 方式 2：只记版本号（默认，已发布 npm、不用改源码）
+### 方式 1：只记版本号（默认，已发布 npm、不用改源码）
 
 在 `profile/package.json` 注册两处：
 
@@ -61,10 +61,11 @@ DSH 启动时**只读** `~/.dsh/profiles/web/package.json`（C 盘，DSH_HOME �
 
 > 锁精确版本号（如 `"3.18.1"`）而不是 `^`：profile 的 `pnpm-lock.yaml` 不进 Git，`^` 会让不同机器解析到不同小版本。
 
-### 方式 1：vendor 源码进 `plugins/`（备选，想改/检查源码，或插件没发布 npm）
+### 方式 2：vendor 源码进 `plugins/`（备选，想改/检查源码，或插件没发布 npm）
+
+**已发布 npm、想改/检查源码**——用 `npm pack` 下载发布版包（含构建产物）：
 
 ```powershell
-# 示例：vendor 已发布包 <pkg>@<version>
 Push-Location $env:TEMP
 npm pack <pkg>@<version>                     # 下载发布版包 → 一个 .tgz
 tar -xzf <下载出的 .tgz> -C D:\DeepseekHarness\plugins
@@ -72,9 +73,11 @@ Rename-Item D:\DeepseekHarness\plugins\package <pkg>
 Pop-Location
 ```
 
+**只发在 GitHub / npm 没发布**——用 `git clone`（或下载仓库 tarball），取里面的插件包源码目录拷到 `D:\DeepseekHarness\plugins\<名字>\`。
+
 然后按上面「加一个新插件」注册：`dependencies` 写 `"<名字>": "link:../plugins/<名字>"`。
 
-> 用 `npm pack`（发布版包，含构建产物 `dist/`），别 `git clone`（源码仓库，含 `src/` + devDeps，可能没构建）。vendor 后删掉包内 `node_modules` / `package-lock.json`。
+> 已发布包用 `npm pack`（含构建产物 `dist/`），别 `git clone`（源码仓库可能含 `src/` + devDeps、没构建）；GitHub-only 的才用 `git clone`。vendor 后删掉包内 `node_modules` / `package-lock.json`。
 
 ## 另一台机器：从零跑起 exe
 

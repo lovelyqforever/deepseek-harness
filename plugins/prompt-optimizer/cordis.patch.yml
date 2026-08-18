@@ -1,0 +1,6 @@
+# prompt-optimizer 的 bundle patch 层：往插件树新增一条宿主条目（提示词优化插件的宿主半）。
+# 宿主半注册 promptOptimizer Typert Remote 服务（optimize 方法）；客户端半注册输入框 ✨ 按钮。
+- insert:
+    - id: prompt-optimizer
+      name: 'prompt-optimizer'
+      config: {}

@@ -14,7 +14,8 @@
         "dsh-background",
         "dsh-plugin-manager",
         "dsh-session-archiver",
-        "@liustack/modlens"
+        "@liustack/modlens",
+        "prompt-optimizer"
       ]
     }
   },
@@ -27,6 +28,7 @@
     "dsh-background": "link:../plugins/dsh-background",
     "dsh-plugin-manager": "link:../plugins/dsh-plugin-manager",
     "dsh-session-archiver": "link:../plugins/dsh-session-archiver",
+    "prompt-optimizer": "link:../plugins/prompt-optimizer",
     "@liustack/modlens": "3.18.2"
   }
 }
