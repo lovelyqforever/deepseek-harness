@@ -26,7 +26,7 @@ window.__ModuleLoader__.load({
       ".dshello_discard,.dshello_save{appearance:none;font:inherit;cursor:pointer;border:1px solid #0000;border-radius:8px;padding:5px 14px;font-size:13px;line-height:1.5}",
       ".dshello_discard{border-color:var(--dsw-alias-border-l2);color:var(--dsw-alias-label-secondary);background:0 0}",
       ".dshello_discard:hover:not(:disabled){color:var(--dsw-alias-label-primary);border-color:var(--dsw-alias-label-dimmed)}",
-      ".dshello_save{background:var(--dsw-alias-label-primary);color:var(--dsw-alias-bg-layer-3)}",
+      ".dshello_save{background:var(--dsw-alias-label-primary);color:var(--dsw-alias-label-primary-inverted)}",
       ".dshello_discard:disabled,.dshello_save:disabled{opacity:.4;cursor:default}",
       ".dshello_discard:focus-visible,.dshello_save:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:1px}",
       ".dshello_field{flex-direction:column;gap:6px;padding:12px 0;display:flex}",
