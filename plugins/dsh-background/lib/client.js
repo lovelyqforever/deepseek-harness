@@ -398,10 +398,17 @@ void main() {
     // 值是 { light, dark }，不校验 token 名，因此可覆盖 design-platform.css 里的全部 token。
     // =====================================================================
     function buildTokens(r) {
-      const a = r.frost / 100;
+      const a = r.frost / 100;   // 「表面」透明度：frost=0 仍允许全透明（背景/侧栏/卡片等大面积表面）
       const e = r.edge;
       const over = Math.min(1, a + 0.12);
-      const pct = Math.round(a * 100);
+      // 「按钮 / 代码块」透明度（mix 用 pct）：钳一个 50% 下限。
+      // 根因：ask_user_question 的“提交”按钮 = Button(primary) = background:button-primary-fill
+      //   + color:label-primary-foreground。frost=0 时下面的 mix() 会把 button-primary-fill 变成
+      //   color-mix(... 0%, transparent) 全透明，按钮只剩文字浮在透明背景上（浅色下白字、深色下黑字
+      //   都看不见）；悬停用 button-primary-hover（本插件未覆盖、实心）才显出来。
+      // 修法：只钳 pct，不动上面的 a —— 大面积表面在 frost=0 依旧全透明，只有按钮、代码块这类
+      //   承载文字的元素至少保持 50% 不透明（即默认 frost=50 的样子），保证可读。
+      const pct = Math.max(50, Math.round(a * 100));
       function surf(l, d) { return { light: "rgba(" + l + "," + a + ")", dark: "rgba(" + d + "," + a + ")" }; }
       function border(la, da) { return { light: "rgba(19,45,83," + la + ")", dark: "rgba(148,180,220," + da + ")" }; }
       // 保留原色相、只降透明度：color-mix 引用原始 static/alias token
